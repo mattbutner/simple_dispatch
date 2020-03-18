@@ -9,7 +9,7 @@
 # v21:
 # set up to simulate the 2017 historical dispatch for the NERC regional level
 # v22:
-# added some better functionality to allow co2, so2, and nox prices to be included in the dispatch. They were only being included in non-default calls of the bidStack.calcGenCost() function in v21. 
+# added some better functionality to allow co2, so2, and nox prices to be included in the dispatch. They were only being included in non-default calls of the bidStack.calcGenCost() function in v21.
 # fixed an error where bidStack was basing 'demand', 'f', 's', and 'a' off of 'mw' instead of ('mw' + str(self.time))
 # fixed an error in bidStack.returnTotalFuelCost where [ind+1] was looking for a row in df that wasn't there. Changed this to [ind]. I'm not really sure how the model was solving before this without throwing errors about the index value not being there?
 # updated the calculation of total production cost to reflect the FullMeritOrder
@@ -27,12 +27,12 @@
 # now tracking production cost in the historic data. Production cost = mmtbu * fuel_price + mwh * vom where fuel_price and vom have the same assumptions as used in the dispatch model
 # added the hist_downtime boolean to generatorData. If hist_downtime = True, this allows you to use historical data to define the weekly capacity, heat rate, etc., which lets generators be unavailable if they didn't produce any power during the historical week. This setting is useful for validation against historical data. If hist_downtime = False, then for weeks when a generator is turned off, or its capacity, heat rate, or emissions rates are outside of the 99th or 1st percentile of the historical data, then we assign the previously observed weekly value to that generator. In this way we ignore maintenance but also allow for generators that did not show up in the dispatch historically to be dispatchable in scenario analysis (e.g. if demand/prices are low, you might not see many GTs online - not because of maintenance but because of economics - but their capacity is still available for dispatch even though they didn't produce anything historically.)
 # note that the dispatch goes a lot slower now. maybe 2x slower. Not exactly sure why, it could be from the addition of easiur damages and gas,coal,oil mmbtu in the output, but I wouldn't expect these to take twice as long. Future versions of this code might benefit from some rewrites to try and improve the code's efficiency and transparency.
-# updated returnMarginalGenerator to be 8x faster for floats. 
+# updated returnMarginalGenerator to be 8x faster for floats.
 # updated returnTotalCost (and other returnTotal...) to be ~90x faster (yes, 90).
 # the last 2 updates combined let us generate a TRE bidStack in 6.5 seconds instead of 50 seconds = ~8x faster. It reduced TRE dispatch from ~60 minutes to ~7 minutes.
 # v25:
-# updated bs.returnFullTotalValue to be 15x faster using similar methods as v24. This has a tiny amount of error associated with it (less than 0.5% annually for most output variables). If we use the old returnFullTotalValue function with the new returnFullMarginalValue, the error goes to zero, but the solve time increases from 2.5 minutes to 4 minutes. The error is small enough that I will leave as is, but we can always remove it later if something in the results seems strange. Perhaps the linear interpolation is not quite accurate and there is something more nuanced going on. Or maybe I wasn't previously calculating it correctly. 
-# updated bs.returnFullMarginalValue to be 5x faster using similar methods as v24. This reduced dispatch solve time by another 60%, brining the TRE dispatch down to 2.5 minutes. 
+# updated bs.returnFullTotalValue to be 15x faster using similar methods as v24. This has a tiny amount of error associated with it (less than 0.5% annually for most output variables). If we use the old returnFullTotalValue function with the new returnFullMarginalValue, the error goes to zero, but the solve time increases from 2.5 minutes to 4 minutes. The error is small enough that I will leave as is, but we can always remove it later if something in the results seems strange. Perhaps the linear interpolation is not quite accurate and there is something more nuanced going on. Or maybe I wasn't previously calculating it correctly.
+# updated bs.returnFullMarginalValue to be 5x faster using similar methods as v24. This reduced dispatch solve time by another 60%, brining the TRE dispatch down to 2.5 minutes.
 # v26:
 # added an approximation of the minimum downtime constraint
 # fixed an issue where year_online was being left off of many generators because the unit portion of the orispl_unit string isn't always consistent between egrid_unt and egrid_gen
@@ -51,7 +51,7 @@
 #   cleanGeneratorData now derates CHP plants according to their electricity : gross ratio
 
 
-
+import numpy
 import pandas
 import matplotlib.pylab
 import scipy
@@ -65,13 +65,13 @@ from bisect import bisect_left
 
 class generatorData(object):
     def __init__(self, nerc, egrid_fname, eia923_fname, ferc714_fname='', ferc714IDs_fname='', cems_folder='', easiur_fname='', include_easiur_damages=True, year=2017, fuel_commodity_prices_excel_dir='', hist_downtime = True, coal_min_downtime = 12, cems_validation_run=False):
-        """ 
+        """
         Translates the CEMS, eGrid, FERC, and EIA data into a dataframe for feeding into the bidStack class
         ---
         nerc : nerc region of interest (e.g. 'TRE', 'MRO', etc.)
         egrid_fname : a .xlsx file name for the eGrid generator data
         eia923_fname : filename of eia form 923
-        ferc714_fname : filename of nerc form 714 hourly system lambda 
+        ferc714_fname : filename of nerc form 714 hourly system lambda
         ferc714IDs_fname : filename that matches nerc 714 respondent IDs with nerc regions
         easiur_fname : filename containing easiur damages ($/tonne) for each power plant orispl
         include_easiur_damages : if True, then easiur damages will be added to the generator data. If False, we will skip that step.
@@ -86,20 +86,20 @@ class generatorData(object):
         egrid_year_str = str(math.floor((year / 2.0)) * 2)[2:4] #eGrid is only every other year so we have to use eGrid 2016 to help with a 2017 run, for example
         if year < 2014:
             egrid_year_str = str(14) #egrid data before 2014 does not have unit level data, so use 2014. We risk missing a few generators that retired between 'year' and 2014.
-        print 'Reading in unit level data from eGRID...'
-        self.egrid_unt = pandas.read_excel(egrid_fname, 'UNT'+egrid_year_str, skiprows=[0]) 
-        print 'Reading in generator level data from eGRID...'
+        print( 'Reading in unit level data from eGRID...')
+        self.egrid_unt = pandas.read_excel(egrid_fname, 'UNT'+egrid_year_str, skiprows=[0])
+        print( 'Reading in generator level data from eGRID...')
         self.egrid_gen = pandas.read_excel(egrid_fname, 'GEN'+egrid_year_str, skiprows=[0])
-        print 'Reading in plant level data from eGRID...'
+        print( 'Reading in plant level data from eGRID...')
         self.egrid_plnt = pandas.read_excel(egrid_fname, 'PLNT'+egrid_year_str, skiprows=[0])
-        print 'Reading in data from EIA Form 923...'
-        eia923 = pandas.read_excel(eia923_fname, 'Page 5 Fuel Receipts and Costs', skiprows=[0,1,2,3]) 
+        print( 'Reading in data from EIA Form 923...')
+        eia923 = pandas.read_excel(eia923_fname, 'Page 5 Fuel Receipts and Costs', skiprows=[0,1,2,3])
         eia923 = eia923.rename(columns={'Plant Id': 'orispl'})
         self.eia923 = eia923
-        eia923_1 = pandas.read_excel(eia923_fname, 'Page 1 Generation and Fuel Data', skiprows=[0,1,2,3,4]) 
+        eia923_1 = pandas.read_excel(eia923_fname, 'Page 1 Generation and Fuel Data', skiprows=[0,1,2,3,4])
         eia923_1 = eia923_1.rename(columns={'Plant Id': 'orispl'})
         self.eia923_1 = eia923_1
-        print 'Reading in data from FERC Form 714...'
+        print('Reading in data from FERC Form 714...')
         self.ferc714 = pandas.read_csv(ferc714_fname)
         self.ferc714_ids = pandas.read_csv(ferc714IDs_fname)
         self.cems_folder = cems_folder
@@ -116,14 +116,14 @@ class generatorData(object):
             self.easiurDamages()
         self.addGenMinOut()
         self.addDummies()
-        self.calcDemandData()     
+        self.calcDemandData()
         self.addElecPriceToDemandData()
         self.demandTimeSeries()
         self.calcMdtCoalEvents()
-        
+
 
     def cleanGeneratorData(self):
-        """ 
+        """
         Converts the eGrid and CEMS data into a dataframe usable by the bidStack class.
         ---
         Creates
@@ -131,7 +131,7 @@ class generatorData(object):
         self.df_cems : has 1 row per hour of the year per generator unit or plant. columns describe energy generated, emissions, and grid region. This dataframe will be used to describe the historical hourly demand, dispatch, and emissions
         """
         #copy in the egrid data and merge it together. In the next few lines we use the eGRID excel file to bring in unit level data for fuel consumption and emissions, generator level data for capacity and generation, and plant level data for fuel type and grid region. Then we compile it together to get an initial selection of data that defines each generator.
-        print 'Cleaning eGRID Data...'
+        print('Cleaning eGRID Data...')
         #unit-level data
         df = self.egrid_unt.copy(deep=True)
         #rename columns
@@ -141,14 +141,14 @@ class generatorData(object):
         #drop nan fuel
         df = df[~df.fuel.isna()]
         #gen-level data: contains MW capacity and MWh annual generation data
-        df_gen = self.egrid_gen.copy(deep=True) 
+        df_gen = self.egrid_gen.copy(deep=True)
         df_gen['orispl_unit'] = df_gen['ORISPL'].map(str) + '_' + df_gen['GENID'].map(str) #orispl_unit is a unique tag for each generator unit
         df_gen_long = df_gen[['ORISPL', 'NAMEPCAP', 'GENNTAN', 'GENYRONL', 'orispl_unit', 'PRMVR', 'FUELG1']].copy()
         df_gen_long.columns = ['orispl', 'mw', 'mwh_ann', 'year_online', 'orispl_unit', 'prime_mover', 'fuel']
         df_gen = df_gen[['NAMEPCAP', 'GENNTAN', 'GENYRONL', 'orispl_unit']]
         df_gen.columns = ['mw', 'mwh_ann', 'year_online', 'orispl_unit']
         #plant-level data: contains fuel, fuel_type, balancing authority, nerc region, and egrid subregion data
-        df_plnt = self.egrid_plnt.copy(deep=True) 
+        df_plnt = self.egrid_plnt.copy(deep=True)
         #fuel
         df_plnt_fuel = df_plnt[['PLPRMFL', 'PLFUELCT']]
         df_plnt_fuel = df_plnt_fuel.drop_duplicates('PLPRMFL')
@@ -158,36 +158,36 @@ class generatorData(object):
         df_plnt = df_plnt[['ORISPL', 'BACODE', 'NERC', 'SUBRGN']]
         df_plnt.columns = ['orispl', 'ba', 'nerc', 'egrid']
         #merge these egrid data together at the unit-level
-        df = df.merge(df_gen, left_index=True, how='left', on='orispl_unit')  
-        df = df.merge(df_plnt, left_index=True, how='left', on='orispl')  
-        df = df.merge(df_plnt_fuel, left_index=True, how='left', on='fuel')  
+        df = df.merge(df_gen, left_index=True, how='left', on='orispl_unit')
+        df = df.merge(df_plnt, left_index=True, how='left', on='orispl')
+        df = df.merge(df_plnt_fuel, left_index=True, how='left', on='fuel')
         #keep only the units in the nerc region we're analyzing
         df = df[df.nerc == self.nerc]
         #calculate the emissions rates
         df['co2'] = scipy.divide(df.co2_ann,df.mwh_ann) * 907.185 #tons to kg
         df['so2'] = scipy.divide(df.so2_ann,df.mwh_ann) * 907.185 #tons to kg
         df['nox'] = scipy.divide(df.nox_ann,df.mwh_ann) * 907.185 #tons to kg
-        #for empty years, look at orispl in egrid_gen instead of orispl_unit 
+        #for empty years, look at orispl in egrid_gen instead of orispl_unit
         df.loc[df.year_online.isna(), 'year_online'] = df[df.year_online.isna()][['orispl', 'prime_mover', 'fuel']].merge(df_gen_long[['orispl', 'prime_mover', 'fuel', 'year_online']].groupby(['orispl', 'prime_mover', 'fuel'], as_index=False).agg('mean'), on=['orispl', 'prime_mover', 'fuel'])['year_online']
         #for any remaining empty years, assume self.year (i.e. that they are brand new)
         df.loc[df.year_online.isna(), 'year_online'] = scipy.zeros_like(df.loc[df.year_online.isna(), 'year_online']) + self.year
         ###
         #now sort through and compile CEMS data. The goal is to use CEMS data to characterize each generator unit. So if CEMS has enough information to describe a generator unit we will over-write the eGRID data. If not, we will use the eGRID data instead. (CEMS data is expected to be more accurate because it has actual hourly performance of the generator units that we can use to calculate their operational characteristics. eGRID is reported on an annual basis and might be averaged out in different ways than we would prefer.)
-        print 'Compiling CEMS data...'
+        print('Compiling CEMS data...')
         #dictionary of which states are in which nerc region (b/c CEMS file downloads have the state in the filename)
-        states = {'FRCC': ['fl'], 
+        states = {'FRCC': ['fl'],
                   'WECC': ['ca','or','wa', 'nv','mt','id','wy','ut','co','az','nm','tx'],
                   'SPP' : ['nm','ks','tx','ok','la','ar','mo'],
                   'RFC' : ['wi','mi','il','in','oh','ky','wv','va','md','pa','nj'],
                   'NPCC' : ['ny','ct','de','ri','ma','vt','nh','me'],
                   'SERC' : ['mo','ar','tx','la','ms','tn','ky','il','va','al','fl','ga','sc','nc'],
-                  'MRO': ['ia','il','mi','mn','mo','mt','nd','ne','sd','wi','wy'], 
+                  'MRO': ['ia','il','mi','mn','mo','mt','nd','ne','sd','wi','wy'],
                   'TRE': ['ok','tx']}
-        #compile the different months of CEMS files into one dataframe, df_cems. (CEMS data is downloaded by state and by month, so compiling a year of data for ERCOT / TRE, for example, requires reading in 12 Texas .csv files and 12 Oklahoma .csv files)   
+        #compile the different months of CEMS files into one dataframe, df_cems. (CEMS data is downloaded by state and by month, so compiling a year of data for ERCOT / TRE, for example, requires reading in 12 Texas .csv files and 12 Oklahoma .csv files)
         df_cems = pandas.DataFrame()
         for s in states[self.nerc]:
             for m in ['01','02','03','04','05','06','07','08','09','10','11', '12']:
-                print s + ': ' + m
+                print( s + ': ' + m)
                 df_cems_add = pandas.read_csv(self.cems_folder + '\\%s\\%s%s%s.csv'%(str(self.year),str(self.year),s,m))
                 df_cems_add = df_cems_add[['ORISPL_CODE', 'UNITID', 'OP_DATE','OP_HOUR','GLOAD (MW)', 'SO2_MASS (lbs)', 'NOX_MASS (lbs)', 'CO2_MASS (tons)', 'HEAT_INPUT (mmBtu)']].dropna()
                 df_cems_add.columns=['orispl', 'unit', 'date','hour','mwh', 'so2_tot', 'nox_tot', 'co2_tot', 'mmbtu']
@@ -195,8 +195,8 @@ class generatorData(object):
         #create the 'orispl_unit' column, which combines orispl and unit into a unique tag for each generation unit
         df_cems['orispl_unit'] = df_cems['orispl'].map(str) + '_' + df_cems['unit'].map(str)
         #bring in geography data and only keep generators within self.nerc
-        df_cems = df_cems.merge(df_plnt, left_index=True, how='left', on='orispl')  
-        df_cems = df_cems[df_cems['nerc']==self.nerc] 
+        df_cems = df_cems.merge(df_plnt, left_index=True, how='left', on='orispl')
+        df_cems = df_cems[df_cems['nerc']==self.nerc]
         #convert emissions to kg
         df_cems.co2_tot = df_cems.co2_tot * 907.185 #tons to kg
         df_cems.so2_tot = df_cems.so2_tot * 0.454 #lbs to kg
@@ -220,14 +220,14 @@ class generatorData(object):
         #first, add a column 't' that says which week of the simulation we are in
         df_orispl_unit['t'] = 52
         for t in scipy.arange(52)+1:
-            start = (datetime.datetime.strptime(str(self.year) + '-01-01', '%Y-%m-%d') + datetime.timedelta(days=7.05*(t-1)-1)).strftime('%Y-%m-%d') 
-            end = (datetime.datetime.strptime(str(self.year) + '-01-01', '%Y-%m-%d') + datetime.timedelta(days=7.05*(t)-1)).strftime('%Y-%m-%d') 
+            start = (datetime.datetime.strptime(str(self.year) + '-01-01', '%Y-%m-%d') + datetime.timedelta(days=7.05*(t-1)-1)).strftime('%Y-%m-%d')
+            end = (datetime.datetime.strptime(str(self.year) + '-01-01', '%Y-%m-%d') + datetime.timedelta(days=7.05*(t)-1)).strftime('%Y-%m-%d')
             start_monthday = float(start[0:4])*10000 + float(start[5:7])*100 + float(start[8:])
             end_monthday = float(end[0:4])*10000 + float(end[5:7])*100 + float(end[8:])
             #slice the data for the days corresponding to the time series period, t
-            df_orispl_unit.loc[(df_orispl_unit.monthday >= start_monthday) & (df_orispl_unit.monthday < end_monthday), 't'] = t          
+            df_orispl_unit.loc[(df_orispl_unit.monthday >= start_monthday) & (df_orispl_unit.monthday < end_monthday), 't'] = t
         #remove outlier emissions and heat rates. These happen at hours where a generator's output is very low (e.g. less than 10 MWh). To remove these, we will remove any datapoints where mwh < 10.0 and heat_rate < 30.0 (0.5% percentiles of the 2014 TRE data).
-        df_orispl_unit = df_orispl_unit[(df_orispl_unit.mwh >= 10.0) & (df_orispl_unit.heat_rate <= 30.0)]    
+        df_orispl_unit = df_orispl_unit[(df_orispl_unit.mwh >= 10.0) & (df_orispl_unit.heat_rate <= 30.0)]
         #aggregate by orispl_unit and t to get the heat rate, emissions rates, and capacity for each unit at each t
         temp_2 = df_orispl_unit.groupby(['orispl_unit', 't'], as_index=False).agg('median')[['orispl_unit', 't', 'heat_rate', 'co2', 'so2', 'nox']].copy(deep=True)
         temp_2['mw'] = df_orispl_unit.groupby(['orispl_unit', 't'], as_index=False).agg('max')['mwh'].copy(deep=True)
@@ -239,10 +239,10 @@ class generatorData(object):
             temp_3.columns = list(['orispl_unit']) + ([c + str(a) for a in scipy.arange(52)+1])
             if not self.hist_downtime:
                 #remove any outlier values in the 1st or 99th percentiles
-                max_array = temp_3.copy().drop(columns='orispl_unit').quantile(0.99, axis=1) 
+                max_array = temp_3.copy().drop(columns='orispl_unit').quantile(0.99, axis=1)
                 min_array = temp_3.copy().drop(columns='orispl_unit').quantile(0.01, axis=1)
                 median_array = temp_3.copy().drop(columns='orispl_unit').median(axis=1)
-                for i in temp_3.index: 
+                for i in temp_3.index:
                     test = temp_3.drop(columns='orispl_unit').iloc[i]
                     test[test > max_array[i]] = scipy.NaN
                     test[test < min_array[i]] = scipy.NaN
@@ -259,7 +259,7 @@ class generatorData(object):
                 temp_3 = temp_3.fillna(M)
             #if we are not using hist_downtime, then use ffill to populate the scipy.NaN values. This allows us to use the last observed value for the generator to populate data that we don't have for it. For example, if generator G had a heat rate of 8.5 during time t-1, but we don't have data for time t, then we assume that generator G has a heat rate of 8.5 for t. When we do this, we can begin to include generators that might be available for dispatch but were not turned on because prices were too low. However, we also remove any chance of capturing legitimate maintenance downtime that would impact the historical data. So, for validation purposes, we probably want to have hist_downtime = True. For future scenario analysis, we probably want to have hist_downtime = False.
             if not self.hist_downtime:
-                temp_3 = temp_3.fillna(method='ffill')  
+                temp_3 = temp_3.fillna(method='ffill')
                 temp_3.iloc[0] = temp_3.iloc[0].fillna(method='ffill') #for some reason the first row was not doing fillna(ffill)
             #merge temp_3 with df_orispl_unit. Now we have weekly heat rates, emissions rates, and capacities for each generator. These values depend on whether we are including hist_downtime
             df_orispl_unit = df_orispl_unit.merge(temp_3, on='orispl_unit', how='left')
@@ -287,11 +287,11 @@ class generatorData(object):
                         df_leftovers[e + str(t)] = df_leftovers[e]
                     if not self.hist_downtime:
                         df_leftovers[e + str(t)] = df_leftovers[e].quantile(0.99)
-                else: 
+                else:
                     df_leftovers[e + str(t)] = df_leftovers[e]
-        df_leftovers.drop(columns = ['gen', 'unit', 'prime_mover', 'fuel', 'mmbtu_ann', 'nox_ann', 'so2_ann', 'co2_ann', 'mwh_ann', 'fuel_type', 'co2', 'so2', 'nox', 'cf', 'heat_rate', 'hours_on', 'year_online'], inplace=True)   
+        df_leftovers.drop(columns = ['gen', 'unit', 'prime_mover', 'fuel', 'mmbtu_ann', 'nox_ann', 'so2_ann', 'co2_ann', 'mwh_ann', 'fuel_type', 'co2', 'so2', 'nox', 'cf', 'heat_rate', 'hours_on', 'year_online'], inplace=True)
         #concat df_leftovers and df_orispl_unit
-        df_orispl_unit = pandas.concat([df_orispl_unit, df_leftovers])     
+        df_orispl_unit = pandas.concat([df_orispl_unit, df_leftovers],sort=False)
         #use df to get prime_mover, fuel, and fuel_type for each orispl_unit
         df_fuel = df[df.orispl_unit.isin(df_orispl_unit.orispl_unit.unique())][['orispl_unit', 'fuel', 'fuel_type', 'prime_mover', 'year_online']]
         df_fuel.fuel = df_fuel.fuel.str.lower()
@@ -317,7 +317,7 @@ class generatorData(object):
         chp_derate_df = chp_derate_df[['orispl', 'Reported\nFuel Type Code', 'Elec_Quantity\nJanuary', 'Elec_Quantity\nFebruary', 'Elec_Quantity\nMarch', 'Elec_Quantity\nApril', 'Elec_Quantity\nMay', 'Elec_Quantity\nJune', 'Elec_Quantity\nJuly', 'Elec_Quantity\nAugust', 'Elec_Quantity\nSeptember', 'Elec_Quantity\nOctober', 'Elec_Quantity\nNovember', 'Elec_Quantity\nDecember', 'Quantity\nJanuary', 'Quantity\nFebruary', 'Quantity\nMarch', 'Quantity\nApril', 'Quantity\nMay', 'Quantity\nJune', 'Quantity\nJuly', 'Quantity\nAugust', 'Quantity\nSeptember', 'Quantity\nOctober', 'Quantity\nNovember', 'Quantity\nDecember']].groupby(['orispl', 'Reported\nFuel Type Code'], as_index=False).agg('sum')
         chp_derate_df['elec_ratio'] = (chp_derate_df[['Elec_Quantity\nJanuary', 'Elec_Quantity\nFebruary', 'Elec_Quantity\nMarch', 'Elec_Quantity\nApril', 'Elec_Quantity\nMay', 'Elec_Quantity\nJune', 'Elec_Quantity\nJuly', 'Elec_Quantity\nAugust', 'Elec_Quantity\nSeptember', 'Elec_Quantity\nOctober', 'Elec_Quantity\nNovember', 'Elec_Quantity\nDecember']].sum(axis=1) / chp_derate_df[['Quantity\nJanuary', 'Quantity\nFebruary', 'Quantity\nMarch', 'Quantity\nApril', 'Quantity\nMay', 'Quantity\nJune', 'Quantity\nJuly', 'Quantity\nAugust', 'Quantity\nSeptember', 'Quantity\nOctober', 'Quantity\nNovember', 'Quantity\nDecember']].sum(axis=1))
         chp_derate_df = chp_derate_df[['orispl', 'Reported\nFuel Type Code', 'elec_ratio']].dropna()
-        chp_derate_df.columns = ['orispl', 'fuel', 'elec_ratio']    
+        chp_derate_df.columns = ['orispl', 'fuel', 'elec_ratio']
         chp_derate_df.fuel = chp_derate_df.fuel.str.lower()
         mw_cols = ['mw','mw1','mw2','mw3','mw4','mw5','mw6','mw7','mw8','mw9','mw10','mw11','mw12','mw13','mw14','mw15','mw16','mw17','mw18','mw19','mw20','mw21','mw22','mw23','mw24','mw25','mw26','mw27','mw28','mw29','mw30','mw31','mw32','mw33','mw34','mw35','mw36','mw37','mw38','mw39','mw40','mw41','mw42','mw43','mw44','mw45','mw46','mw47','mw48','mw49','mw50', 'mw51', 'mw52']
         chp_derate_df = df_orispl_unit.merge(chp_derate_df, how='right', on=['orispl', 'fuel'])[mw_cols + ['orispl', 'fuel', 'elec_ratio', 'orispl_unit']]
@@ -325,7 +325,7 @@ class generatorData(object):
         chp_derate_df.dropna(inplace=True)
         #merge updated mw columns back into df_orispl_unit
         #update the chp_derate_df index to match df_orispl_unit
-        chp_derate_df.index = df_orispl_unit[df_orispl_unit.orispl_unit.isin(chp_derate_df.orispl_unit)].index       
+        chp_derate_df.index = df_orispl_unit[df_orispl_unit.orispl_unit.isin(chp_derate_df.orispl_unit)].index
         df_orispl_unit.update(chp_derate_df[mw_cols])
         #replace the global dataframes
         self.df_cems = df_cems
@@ -333,22 +333,22 @@ class generatorData(object):
 
 
     def calcFuelPrices(self):
-        """ 
+        """
         let RC be a high-ish price (1.1 * SUB)
         let LIG be based on national averages
         let NG be based on purchase type, where T takes C purchase type values and nan takes C, S, & T purchase type values
         ---
         Adds one column for each week of the year to self.df that contain fuel prices for each generation unit
-        """   
+        """
         #we use eia923, where generators report their fuel purchases
         df = self.eia923.copy(deep=True)
         df = df[['YEAR','MONTH','orispl','ENERGY_SOURCE','FUEL_GROUP','QUANTITY','FUEL_COST', 'Purchase Type']]
         df.columns = ['year', 'month', 'orispl' , 'fuel', 'fuel_type', 'quantity', 'fuel_price', 'purchase_type']
-        df.fuel = df.fuel.str.lower()       
+        df.fuel = df.fuel.str.lower()
         #clean up prices
         df.loc[df.fuel_price=='.', 'fuel_price'] = scipy.nan
         df.fuel_price = df.fuel_price.astype('float')/100.
-        df = df.reset_index()    
+        df = df.reset_index()
         #find unique monthly prices per orispl and fuel type
         #create empty dataframe to hold the results
         df2 = self.df.copy(deep=True)[['fuel','orispl','orispl_unit']]
@@ -370,10 +370,10 @@ class generatorData(object):
                 temp_prices.loc[temp_prices.fuel_price.isna(), 'fuel_price'] = temp_prices.fuel_price.median()
                 #add the monthly fuel prices into orispl_prices
                 orispl_prices.loc[orispl_prices.orispl_unit==o_u, orispl_prices.columns.difference(['orispl_unit', 'orispl', 'fuel'])] = scipy.append(scipy.array(temp_prices.fuel_price),temp.quantity.sum())
-        
+
         #add in additional purchasing information for slicing that we can remove later on
-        orispl_prices = orispl_prices.merge(df[['orispl' , 'fuel', 'purchase_type']].drop_duplicates(subset=['orispl', 'fuel'], keep='first'), on=['orispl', 'fuel'], how='left')           
-                
+        orispl_prices = orispl_prices.merge(df[['orispl' , 'fuel', 'purchase_type']].drop_duplicates(subset=['orispl', 'fuel'], keep='first'), on=['orispl', 'fuel'], how='left')
+
         #for any fuels that we have non-zero region level EIA923 data, apply those monthly fuel price profiles to other generators with the same fuel type but that do not have EIA923 fuel price data
         f_iter = list(orispl_prices[orispl_prices[1] != 0].dropna().fuel.unique())
         if 'rc' in orispl_prices.fuel.unique():
@@ -384,7 +384,7 @@ class generatorData(object):
             orispl_prices_empty = orispl_prices[(orispl_prices.fuel==f) & (orispl_prices[1]==0)].dropna(subset=['quantity']) #plants with some EIA923 data but no prices
             orispl_prices_nan = orispl_prices[(orispl_prices.fuel==f) & (orispl_prices['quantity'].isna())] #plants with no EIA923 data
             multiplier = 1.00
-            
+
             #if lignite, use the national fuel-quantity-weighted median
             if f == 'lig':
                 #grab the 5th - 95th percentile prices
@@ -400,13 +400,13 @@ class generatorData(object):
                 temp_prices.loc[temp_prices.fuel_price.isna(), 'fuel_price'] = temp_prices.fuel_price.median()
                 #update orispl_prices for any units in orispl_prices_empty or orispl_prices_nan
                 orispl_prices.loc[(orispl_prices.fuel==f) & ((orispl_prices.orispl.isin(orispl_prices_empty.orispl)) | (orispl_prices.orispl.isin(orispl_prices_nan.orispl))), orispl_prices.columns.difference(['orispl_unit', 'orispl', 'fuel', 'purchase_type'])] = scipy.append(scipy.array(temp_prices.fuel_price),temp.quantity.sum())
-        
+
         #if natural gas, sort by supplier type (contract, tolling, spot, or other)
-            elif f =='ng':        
+            elif f =='ng':
                 orispl_prices_filled_0 = orispl_prices_filled.copy()
                 orispl_prices_empty_0 = orispl_prices_empty.copy()
                 #loop through the different purchase types and update any empties
-                for pt in ['T', 'S', 'C']:  
+                for pt in ['T', 'S', 'C']:
                     orispl_prices_filled = orispl_prices_filled_0[orispl_prices_filled_0.purchase_type==pt]
                     orispl_prices_empty = orispl_prices_empty_0[orispl_prices_empty_0.purchase_type==pt]
                     multiplier = 1.00
@@ -423,8 +423,8 @@ class generatorData(object):
                         if loop < loop_len:
                             loop += 1
                         else:
-                            loop = 0                
-                #for nan prices (those without any EIA923 information) use Spot, Contract, and Tolling Prices (i.e. all of the non-nan prices) 
+                            loop = 0
+                #for nan prices (those without any EIA923 information) use Spot, Contract, and Tolling Prices (i.e. all of the non-nan prices)
                 #update orispl_prices_filled to include the updated empty prices
                 orispl_prices_filled_new = orispl_prices[(orispl_prices.fuel==f) & (orispl_prices[1] != 0.0)].dropna().drop_duplicates(subset='orispl', keep='first').sort_values('quantity', ascending=0)
                 #loop through the filled prices and use them for nan prices
@@ -436,8 +436,8 @@ class generatorData(object):
                     if loop < loop_len:
                         loop += 1
                     else:
-                        loop = 0     
-            #otherwise            
+                        loop = 0
+            #otherwise
             else:
                 multiplier = 1.00
                 #if refined coal, use subbit prices * 1.15
@@ -454,10 +454,10 @@ class generatorData(object):
                         loop += 1
                     else:
                         loop = 0
-        
+
         #and now we still have some nan values for fuel types that had no nerc_region eia923 data. We'll start with the national median for the EIA923 data.
-        f_array = scipy.intersect1d(orispl_prices[orispl_prices[1].isna()].fuel.unique(), df.fuel.unique())
-        for f in f_array: 
+        f_array = numpy.intersect1d(orispl_prices[orispl_prices[1].isna()].fuel.unique().astype(str), df.fuel.unique().astype(str))
+        for f in f_array:
             temp = df[df.fuel==f][['month', 'quantity', 'fuel_price']]
             temp['weighted'] = scipy.multiply(temp.quantity, temp.fuel_price)
             temp = temp.groupby(['month'], as_index=False).sum()[['month', 'quantity', 'weighted']]
@@ -487,22 +487,22 @@ class generatorData(object):
         #now we have orispl_prices, which has a weekly fuel price for each orispl_unit based mostly on EIA923 data with some commodity, national-level data from EIA to supplement
         #now merge the fuel price columns into self.df
         orispl_prices.drop(['orispl', 'fuel'], axis=1, inplace=True)
-               
+
         #save
         self.df = self.df.merge(orispl_prices, on='orispl_unit', how='left')
 
 
     def easiurDamages(self):
-        """ 
+        """
         Adds EASIUR environmental damages for SO2 and NOx emissions for each power plant.
         ---
         Adds one column for each week of the year to self.df that contains environmental damages in $/MWh for each generation unit calculated using the EASIURE method
-        """   
-        print 'Adding environmental damages...'
+        """
+        print('Adding environmental damages...')
         #clean the easiur data
         df = self.easiur_per_plant.copy(deep=True)
         df = df[['ORISPL','SO2 Winter 150m','SO2 Spring 150m','SO2 Summer 150m','SO2 Fall 150m','NOX Winter 150m','NOX Spring 150m','NOX Summer 150m','NOX Fall 150m']]
-        df.columns = ['orispl', 'so2_dmg_win', 'so2_dmg_spr' , 'so2_dmg_sum', 'so2_dmg_fal', 'nox_dmg_win', 'nox_dmg_spr' , 'nox_dmg_sum', 'nox_dmg_fal']        
+        df.columns = ['orispl', 'so2_dmg_win', 'so2_dmg_spr' , 'so2_dmg_sum', 'so2_dmg_fal', 'nox_dmg_win', 'nox_dmg_spr' , 'nox_dmg_sum', 'nox_dmg_fal']
         #create empty dataframe to hold the results
         df2 = self.df.copy(deep=True)
         #for each week, calculate the $/MWh damages for each generator based on its emissions rate (kg/MWh) and easiur damages ($/tonne)
@@ -514,7 +514,7 @@ class generatorData(object):
 
 
     def addGenMinOut(self):
-        """ 
+        """
         Adds fuel price and vom costs to the generator dataframe 'self.df'
         ---
         """
@@ -523,18 +523,18 @@ class generatorData(object):
         min_out_coal = 0.4
         min_out_ngcc = 0.5
         min_out_ngst = min_out_coal #assume the same as coal boiler
-        min_out_nggt = 0.5 
+        min_out_nggt = 0.5
         min_out_oilst = min_out_coal #assume the same as coal boiler
         min_out_oilgt = min_out_nggt #assume the same as gas turbine
         min_out_nuc = 0.5
         min_out_bio = 0.4
         df['min_out_multiplier'] = scipy.where(df.fuel_type=='oil', scipy.where(df.prime_mover=='st', min_out_oilst, min_out_oilgt), scipy.where(df.fuel_type=='biomass',min_out_bio, scipy.where(df.fuel_type=='coal',min_out_coal, scipy.where(df.fuel_type=='nuclear',min_out_nuc, scipy.where(df.fuel_type=='gas', scipy.where(df.prime_mover=='gt', min_out_nggt, scipy.where(df.prime_mover=='st', min_out_ngst, min_out_ngcc)), 0.10)))))
         df['min_out'] = df.mw * df.min_out_multiplier
-        self.df = df          
-        
-        
+        self.df = df
+
+
     def addGenVom(self):
-        """ 
+        """
         Adds vom costs to the generator dataframe 'self.df'
         ---
         """
@@ -566,13 +566,13 @@ class generatorData(object):
                     return vom_range_nggt[0] + (vom_range_nggt[1]-vom_range_nggt[0])/(age_range_nggt[1]-age_range_nggt[0]) * (self.year - yearOnline)
                 if primeMover=='st':
                     return vom_range_ngst[0] + (vom_range_ngst[1]-vom_range_ngst[0])/(age_range_ngst[1]-age_range_ngst[0]) * (self.year - yearOnline)
-        
+
         df['vom'] = df.apply(lambda x: vom_calculator(x['fuel_type'], x['fuel'], x['prime_mover'], x['year_online']), axis=1)
         self.df = df
 
 
     def addDummies(self):
-        """ 
+        """
         Adds dummy "coal_0" and "ngcc_0" generators to df
         ---
         """
@@ -586,28 +586,28 @@ class generatorData(object):
         df.loc[len(df)-1, self.df.columns.drop(['ba', 'nerc', 'egrid'])] = df.loc[0, df.columns.drop(['ba', 'nerc', 'egrid'])] * 0
         df.loc[len(df)-1,['orispl', 'orispl_unit', 'fuel', 'fuel_type', 'prime_mover', 'min_out_multiplier', 'min_out', 'is_gas']] = ['ngcc_0', 'ngcc_0', 'ng', 'gas', 'ct', 0.0, 0.0, 1]
         self.df = df
-            
-     
+
+
     def calcDemandData(self):
-        """ 
+        """
         Uses CEMS data to calculate net demand (i.e. total fossil generation), total emissions, and each generator type's contribution to the generation mix
         ---
         Creates
         self.hist_dispatch : one row per hour of the year, columns for net demand, total emissions, operating cost of the marginal generator, and the contribution of different fuels to the total energy production
         """
-        print 'Calculating demand data from CEMS...'
+        print('Calculating demand data from CEMS...')
         #re-compile the cems data adding in fuel and fuel type
         df = self.df_cems.copy(deep=True)
         merge_orispl_unit = self.df.copy(deep=True)[['orispl_unit', 'fuel', 'fuel_type']]
         merge_orispl = self.df.copy(deep=True)[['orispl', 'fuel', 'fuel_type']].drop_duplicates('orispl')
-        df = df.merge(merge_orispl_unit, left_index=True, how='left', on=['orispl_unit']) 
+        df = df.merge(merge_orispl_unit, left_index=True, how='left', on=['orispl_unit'])
         df.loc[df.fuel.isna(), 'fuel'] = scipy.array(df[df.fuel.isna()].merge(merge_orispl, left_index=True, how='left', on=['orispl']).fuel_y)
         df.loc[df.fuel_type.isna(), 'fuel_type'] = scipy.array(df[df.fuel_type.isna()].merge(merge_orispl, left_index=True, how='left', on=['orispl']).fuel_type_y)
         #build the hist_dispatch dataframe
         #start with the datetime column
         start_date_str = (self.df_cems.date.min()[-4:] + '-' + self.df_cems.date.min()[:5] + ' 00:00')
         date_hour_count = len(self.df_cems.date.unique())*24#+1
-        hist_dispatch = pandas.DataFrame(scipy.array([pandas.Timestamp(start_date_str) + datetime.timedelta(hours=i) for i in xrange(date_hour_count)]), columns=['datetime'])
+        hist_dispatch = pandas.DataFrame(scipy.array([pandas.Timestamp(start_date_str) + datetime.timedelta(hours=i) for i in range(date_hour_count)]), columns=['datetime'])
         #add columns by aggregating df by date + hour
         hist_dispatch['demand'] = df.groupby(['date','hour'], as_index=False).sum().mwh
         hist_dispatch['co2_tot'] = df.groupby(['date','hour'], as_index=False).sum().co2_tot # * 2000
@@ -629,11 +629,11 @@ class generatorData(object):
 
 
     def addElecPriceToDemandData(self):
-        """ 
+        """
         Calculates the historical electricity price for the nerc region, adding it as a new column to the demand data
         ---
         """
-        print 'Adding historical electricity prices...'
+        print('Adding historical electricity prices...')
         #We will use FERC 714 data, where balancing authorities and similar entities report their locational marginal prices. This script pulls in those price for every reporting entity in the nerc region and takes the max price across the BAs/entities for each hour.
         df = self.ferc714.copy(deep=True)
         df_ids = self.ferc714_ids.copy(deep=True)
@@ -651,32 +651,32 @@ class generatorData(object):
         df_bas_temp.drop(columns=['date', 'variable', 'time'], inplace=True)
         #aggregate by datetime
         df_bas_temp = df_bas_temp.groupby('datetime', as_index=False).max()
-        df_bas_temp.columns = ['datetime', 'price']        
+        df_bas_temp.columns = ['datetime', 'price']
         #add the price column to self.hist_dispatch
         self.hist_dispatch['gen_cost_marg'] = df_bas_temp.price
 
 
     def demandTimeSeries(self):
-        """ 
+        """
         Re-formats and slices self.hist_dispatch to produce a demand time series to be used by the dispatch object
         ---
         Creates
         self.demand_data : row for each hour. columns for datetime and demand
         """
-        print 'Creating "demand_data" time series...'
+        print( 'Creating "demand_data" time series...')
         #demand using CEMS data
         demand_data = self.hist_dispatch.copy(deep=True)
         demand_data.datetime = pandas.to_datetime(demand_data.datetime)
         self.demand_data = demand_data[['datetime', 'demand']]
-    
-    
+
+
     def cemsBoxPlot(self, plot_col):
-        """ 
+        """
         Creates a box plot of the hourly CEMS data for each unique orispl_unit for the given column
         ---
         plot_col: 'co2', 'heat_rate', etc.
         """
-        print 'Creating "demand_data" time series...'
+        print( 'Creating "demand_data" time series...')
         #copy the CEMS data
         cems_copy = self.df_cems.copy(deep=True)
         #each uniqe unit tag
@@ -684,7 +684,7 @@ class generatorData(object):
        #empty data frame for results
         result = pandas.DataFrame({'orispl_unit': ounique, plot_col+'_5': scipy.zeros_like(ounique), plot_col+'_25': scipy.zeros_like(ounique), plot_col+'_50': scipy.zeros_like(ounique), plot_col+'_75': scipy.zeros_like(ounique), plot_col+'_95': scipy.zeros_like(ounique), 'data_points': scipy.zeros_like(ounique)})
         #for each unique unit calculate the 5th, 25th, median, 75th, and 95th percentile data
-        print 'Calculating quantiles...'
+        print( 'Calculating quantiles...')
         for o in ounique:
             cems_e_test = cems_copy.loc[cems_copy.orispl_unit==o, plot_col]
             if len(cems_e_test) != 0:
@@ -721,10 +721,10 @@ class generatorData(object):
 
 
     def calcMdtCoalEvents(self):
-        """ 
+        """
         Creates a dataframe of the start, end, and demand_threshold for each event in the demand data where we would expect a coal plant's minimum downtime constraint to kick in
         ---
-        """                      
+        """
         mdt_coal_events = self.demand_data.copy()
         mdt_coal_events['indices'] = mdt_coal_events.index
         #find the integral from x to x+
@@ -736,7 +736,7 @@ class generatorData(object):
             try:
                 return scipy.minimum(scipy.repeat(mdt_coal_events.demand[mdt_index], (self.coal_min_downtime+1)), mdt_coal_events.demand[mdt_index:(mdt_index+self.coal_min_downtime+1)]).sum()
             except:
-                return mdt_coal_events.demand[mdt_index]   
+                return mdt_coal_events.demand[mdt_index]
         mdt_coal_events['integral_x_xt_below_x'] = mdt_coal_events.indices.apply(d_forward_convex_integral)
         #find the integral of the convex portion below x_xt
         mdt_coal_events['integral_convex_portion_btwn_x_xt'] = mdt_coal_events['integral_x'] - mdt_coal_events['integral_x_xt_below_x']
@@ -745,26 +745,26 @@ class generatorData(object):
             try:
                 return int(mdt_coal_events.demand[mdt_index] <= 1.05*mdt_coal_events.demand[mdt_index + self.coal_min_downtime]) * mdt_coal_events.integral_convex_portion_btwn_x_xt[mdt_index]
             except:
-                return mdt_coal_events.integral_convex_portion_btwn_x_xt[mdt_index]   
+                return mdt_coal_events.integral_convex_portion_btwn_x_xt[mdt_index]
         mdt_coal_events['integral_convex_filtered'] = mdt_coal_events.indices.apply(d_keep_convex)
         #mdt_coal_events['integral_convex_filtered'] = mdt_coal_events['integral_convex_filtered'].replace(0, scipy.nan)
         #keep any local maximums of the filtered convex integral
-        mdt_coal_events['local_maximum'] = ((mdt_coal_events.integral_convex_filtered== mdt_coal_events.integral_convex_filtered.rolling(window=self.coal_min_downtime/2+1, center=True).max()) & (mdt_coal_events.integral_convex_filtered != 0) & (mdt_coal_events.integral_x >= mdt_coal_events.integral_x_xt))
+        mdt_coal_events['local_maximum'] = ((mdt_coal_events.integral_convex_filtered== mdt_coal_events.integral_convex_filtered.rolling(window=round(self.coal_min_downtime/2)+1, center=True).max()) & (mdt_coal_events.integral_convex_filtered != 0) & (mdt_coal_events.integral_x >= mdt_coal_events.integral_x_xt))
         #spread the maximum out over the min downtime window
         mdt_coal_events = mdt_coal_events[mdt_coal_events.local_maximum]
         mdt_coal_events['demand_threshold'] = mdt_coal_events.demand
         mdt_coal_events['start'] = mdt_coal_events.datetime
         mdt_coal_events['end'] = mdt_coal_events.start + pandas.DateOffset(hours=self.coal_min_downtime)
         mdt_coal_events = mdt_coal_events[['start', 'end', 'demand_threshold']]
-        self.mdt_coal_events = mdt_coal_events     
+        self.mdt_coal_events = mdt_coal_events
 
-    
-    
+
+
 
 
 class bidStack(object):
     def __init__(self, gen_data_short, co2_dol_per_kg=0.0, so2_dol_per_kg=0.0, nox_dol_per_kg=0.0, coal_dol_per_mmbtu=0.0, coal_capacity_derate = 0.0, time=1, dropNucHydroGeo=False, include_min_output=True, initialization=True, coal_mdt_demand_threshold = 0.0, mdt_weight=0.50):
-        """ 
+        """
         1) Bring in the generator data created by the "generatorData" class.
         2) Calculate the generation cost for each generator and sort the generators by generation cost. Default emissions prices [$/kg] are 0.00 for all emissions.
         ---
@@ -777,13 +777,13 @@ class bidStack(object):
         include_min_output : if True, will include a representation of generators' minimum output constraints that impacts the marginal generators in the dispatch. So, a "True" value here is closer to the real world.
         initialization : if True, the bs object is being defined for the first time. This will trigger the generation of a dummy 0.0 demand generator to bookend the bottom of the merit order (in calcGenCost function) after which initialization will be set to False
         """
-        self.year = gen_data_short.year
-        self.nerc = gen_data_short.nerc
-        self.hist_dispatch = gen_data_short.hist_dispatch
-        self.mdt_coal_events = gen_data_short.mdt_coal_events
+        self.year = gen_data_short["year"]
+        self.nerc = gen_data_short["nerc"]
+        self.hist_dispatch = gen_data_short["hist_dispatch"]
+        self.mdt_coal_events = gen_data_short["mdt_coal_events"]
         self.coal_mdt_demand_threshold = coal_mdt_demand_threshold
         self.mdt_weight = mdt_weight
-        self.df_0 = gen_data_short.df
+        self.df_0 = gen_data_short["df"]
         self.df = self.df_0.copy(deep=True)
         self.co2_dol_per_kg = co2_dol_per_kg
         self.so2_dol_per_kg = so2_dol_per_kg
@@ -797,8 +797,8 @@ class bidStack(object):
             self.dropNuclearHydroGeo()
         self.addFuelColor()
         self.processData()
-      
-        
+
+
     def updateDf(self, new_data_frame):
         self.df_0 = new_data_frame
         self.df = self.df_0.copy(deep=True)
@@ -806,7 +806,7 @@ class bidStack(object):
 
 
     def dropNuclearHydroGeo(self):
-        """ 
+        """
         Removes nuclear, hydro, and geothermal plants from self.df_0 (since they don't show up in CEMS)
         ---
         """
@@ -819,10 +819,10 @@ class bidStack(object):
         """
         self.co2_dol_per_kg = co2_price_new
         self.so2_dol_per_kg = so2_price_new
-        self.nox_dol_per_kg = nox_price_new   
+        self.nox_dol_per_kg = nox_price_new
         self.coal_dol_per_mmbtu = coal_price_new
-    
-    
+
+
     def processData(self):
         """ runs a few of the internal functions. There are couple of places in the class that run these functions in this order, so it made sense to just locate this set of function runs in a single location
         ---
@@ -833,16 +833,16 @@ class bidStack(object):
         self.calcFullMeritOrder()
         self.createMarginalPiecewise() #create this again after FullMeritOrder so that it includes the new full_####_marg columns
         self.createTotalInterpolationFunctionsFull()
-    
-    
+
+
     def updateTime(self, t_new):
         """ Updates self.time
         ---
         """
         self.time = t_new
         self.processData()
-    
-    
+
+
     def addFuelColor(self):
         """ Assign a fuel type for each fuel and a color for each fuel type to be used in charts
         ---
@@ -850,13 +850,13 @@ class bidStack(object):
         """
         c = {'gas':'#888888', 'coal':'#bf5b17', 'oil':'#252525' , 'nuclear':'#984ea3', 'hydro':'#386cb0', 'biomass':'#7fc97f', 'geothermal':'#e31a1c', 'ofsl': '#c994c7'}
         self.df_0['fuel_color'] = '#bcbddc'
-        for c_key in c.iterkeys():
-            self.df_0.loc[self.df_0.fuel_type == c_key, 'fuel_color'] = c[c_key]            
-     
-           
+        for c_key in iter(c.keys()):
+            self.df_0.loc[self.df_0.fuel_type == c_key, 'fuel_color'] = c[c_key]
+
+
     def calcGenCost(self):
         """ Calculate average costs that are function of generator data, fuel cost, and emissions prices.
-        gen_cost ($/MWh) = (heat_rate * "fuel"_price) + (co2 * co2_price) + (so2 * so2_price) + (nox * nox_price) + vom 
+        gen_cost ($/MWh) = (heat_rate * "fuel"_price) + (co2 * co2_price) + (so2 * so2_price) + (nox * nox_price) + vom
         """
         df = self.df_0.copy(deep=True)
         #pre-processing:
@@ -865,15 +865,15 @@ class bidStack(object):
             #adjust coal capacity by the "coal_capacity_derate" input
         df.loc[df.fuel_type=='coal', 'mw' + str(self.time)] = df.loc[df.fuel_type=='coal', 'mw' + str(self.time)] * (1.0 -  self.coal_capacity_derate)
         #calculate the generation cost:
-        df['fuel_cost'] = df['heat_rate' + str(self.time)] * df['fuel_price' + str(self.time)] 
-        df['co2_cost'] = df['co2' + str(self.time)] * self.co2_dol_per_kg 
-        df['so2_cost'] = df['so2' + str(self.time)] * self.so2_dol_per_kg 
-        df['nox_cost'] = df['nox' + str(self.time)] * self.nox_dol_per_kg 
+        df['fuel_cost'] = df['heat_rate' + str(self.time)] * df['fuel_price' + str(self.time)]
+        df['co2_cost'] = df['co2' + str(self.time)] * self.co2_dol_per_kg
+        df['so2_cost'] = df['so2' + str(self.time)] * self.so2_dol_per_kg
+        df['nox_cost'] = df['nox' + str(self.time)] * self.nox_dol_per_kg
         df['gen_cost'] = scipy.maximum(0.01, df.fuel_cost + df.co2_cost + df.so2_cost + df.nox_cost + df.vom)
         #add a zero generator so that the bid stack goes all the way down to zero. This is important for calculating information for the marginal generator when the marginal generator is the first one in the bid stack.
         df['dmg_easiur'] = df['dmg' + str(self.time)]
         #if self.initialization:
-        df = df.append(df.loc[0]*0) 
+        df = df.append(df.loc[0]*0)
         df = df.append(df.iloc[-1])
         #self.initialization = False
         df.sort_values('gen_cost', inplace=True)
@@ -882,21 +882,21 @@ class bidStack(object):
         ngcc_0_ind = df[df.orispl_unit=='ngcc_0'].index[0]
         df = pandas.concat([df.iloc[[0],:], df[df.orispl_unit=='coal_0'], df[df.orispl_unit=='ngcc_0'], df.drop([0, coal_0_ind, ngcc_0_ind], axis=0)], axis=0)
         df.reset_index(drop=True, inplace=True)
-        df['demand'] = df['mw' + str(self.time)].cumsum()	
+        df['demand'] = df['mw' + str(self.time)].cumsum()
         df.loc[len(df)-1, 'demand'] = df.loc[len(df)-1, 'demand'] + 1000000 #creates a very large generator at the end of the merit order so that demand cannot be greater than supply
         df['f'] = df['demand']
         df['s'] = scipy.append(0, scipy.array(df.f[0:-1]))
-        df['a'] = scipy.maximum(df.s - df.min_out*(1/0.10), 1.0)       
+        df['a'] = scipy.maximum(df.s - df.min_out*(1/0.10), 1.0)
         #add a very large demand for the last row
-        self.df = df  
-        
-        
+        self.df = df
+
+
     def createMarginalPiecewise(self):
         """ Creates a piecewsise dataframe of the generator data. We can then interpolate this data frame for marginal data instead of querying.
         """
-        test = self.df.copy()      
+        test = self.df.copy()
         test_shift = test.copy()
-        test_shift[['demand']] = test_shift.demand + 0.1      
+        test_shift[['demand']] = test_shift.demand + 0.1
         test.index = test.index * 2
         test_shift.index = test_shift.index * 2 + 1
         df_marg_piecewise = pandas.concat([test, test_shift]).sort_index()
@@ -911,20 +911,20 @@ class bidStack(object):
         demand : [MW]
         return_type : column header of self.df being returned (e.g. 'gen', 'fuel_type', 'gen_cost', etc.)
         """
-        try: #try interpolation as it's much faster. 
+        try: #try interpolation as it's much faster.
             try: #for columns with a time value at the end (i.e. nox30)
                 return scipy.interp(demand, self.df_marg_piecewise['demand'], scipy.array(self.df_marg_piecewise[return_type + str(self.time)], dtype='float64'))
             except: #for columns without a time value at the end (i.e. gen_cost)
-                return scipy.interp(demand, self.df_marg_piecewise['demand'], scipy.array(self.df_marg_piecewise[return_type], dtype='float64'))   
+                return scipy.interp(demand, self.df_marg_piecewise['demand'], scipy.array(self.df_marg_piecewise[return_type], dtype='float64'))
         except: #interpolation will only work for floats, so we use querying below otherwise (~8x slower)
             ind = scipy.minimum(self.df.index[self.df.demand <= demand][-1], len(self.df)-2)
             return self.df[return_type][ind+1]
-	
-					
+
+
     def createTotalInterpolationFunctions(self):
         """ Creates interpolation functions for the total data (i.e. total cost, total emissions, etc.) depending on total demand. Then the returnTotalCost, returnTotal###, ..., functions use these interpolations rather than querying the dataframes as in previous versions. This reduces solve time by ~90x.
-        """       
-        test = self.df.copy()      
+        """
+        test = self.df.copy()
         #cost
         self.f_totalCost = scipy.interpolate.interp1d(test.demand, (test['mw' + str(self.time)] * test['gen_cost']).cumsum())
         #emissions and health damages
@@ -936,7 +936,7 @@ class bidStack(object):
         self.f_totalCO2_Coal = scipy.interpolate.interp1d(test.demand, (test['mw' + str(self.time)] * test['co2' + str(self.time)] * test['is_coal']).cumsum())
         self.f_totalSO2_Coal = scipy.interpolate.interp1d(test.demand, (test['mw' + str(self.time)] * test['so2' + str(self.time)] * test['is_coal']).cumsum())
         self.f_totalNOX_Coal = scipy.interpolate.interp1d(test.demand, (test['mw' + str(self.time)] * test['nox' + str(self.time)] * test['is_coal']).cumsum())
-        self.f_totalDmg_Coal = scipy.interpolate.interp1d(test.demand, (test['mw' + str(self.time)] * test['dmg' + str(self.time)] * test['is_coal']).cumsum())       
+        self.f_totalDmg_Coal = scipy.interpolate.interp1d(test.demand, (test['mw' + str(self.time)] * test['dmg' + str(self.time)] * test['is_coal']).cumsum())
         #fuel mix
         self.f_totalGas = scipy.interpolate.interp1d(test.demand, (test['is_gas'] * test['mw' + str(self.time)]).cumsum())
         self.f_totalCoal = scipy.interpolate.interp1d(test.demand, (test['is_coal'] * test['mw' + str(self.time)]).cumsum())
@@ -953,8 +953,8 @@ class bidStack(object):
         self.f_totalConsHydro = scipy.interpolate.interp1d(test.demand, (test['is_hydro'] * test['heat_rate' + str(self.time)] * test['mw' + str(self.time)]).cumsum())
         self.f_totalConsGeothermal = scipy.interpolate.interp1d(test.demand, (test['is_geothermal'] * test['heat_rate' + str(self.time)] * test['mw' + str(self.time)]).cumsum())
         self.f_totalConsBiomass = scipy.interpolate.interp1d(test.demand, (test['is_biomass'] * test['heat_rate' + str(self.time)] * test['mw' + str(self.time)]).cumsum())
-                
-					
+
+
     def returnTotalCost(self, demand):
         """ Given demand input, return the integral of the bid stack generation cost (i.e. the total operating cost of the online power plants).
         ---
@@ -962,8 +962,8 @@ class bidStack(object):
         return : integral value of the bid stack cost = total operating costs of the online generator fleet [$].
         """
         return self.f_totalCost(demand)
-      
-       
+
+
     def returnTotalEmissions(self, demand, emissions_type):
         """ Given demand and emissions_type inputs, return the integral of the bid stack emissions (i.e. the total emissions of the online power plants).
         ---
@@ -977,8 +977,8 @@ class bidStack(object):
             return self.f_totalSO2(demand)
         if emissions_type == 'nox':
             return self.f_totalNOX(demand)
-            
-            
+
+
     def returnTotalEmissions_Coal(self, demand, emissions_type):
         """ Given demand and emissions_type inputs, return the integral of the bid stack emissions (i.e. the total emissions of the online power plants).
         ---
@@ -992,8 +992,8 @@ class bidStack(object):
             return self.f_totalSO2_Coal(demand)
         if emissions_type == 'nox':
             return self.f_totalNOX_Coal(demand)
-    
-    
+
+
     def returnTotalEasiurDamages(self, demand):
         """ Given demand input, return the integral of the bid stack EASIUR damages (i.e. the total environmental damages of the online power plants).
         ---
@@ -1001,8 +1001,8 @@ class bidStack(object):
         return : integral value of the bid environmental damages = total damages of the online generator fleet [$].
         """
         return self.f_totalDmg(demand)
-        
-    
+
+
     def returnTotalEasiurDamages_Coal(self, demand):
         """ Given demand input, return the integral of the bid stack EASIUR damages (i.e. the total environmental damages of the online power plants).
         ---
@@ -1010,8 +1010,8 @@ class bidStack(object):
         return : integral value of the bid environmental damages = total damages of the online generator fleet [$].
         """
         return self.f_totalDmg_Coal(demand)
-    
-    
+
+
     def returnTotalFuelMix(self, demand, is_fuel_type):
         """ Given demand and is_fuel_type inputs, return the total MW of online generation of is_fuel_type.
         ---
@@ -1020,7 +1020,7 @@ class bidStack(object):
         return : total amount of online generation of type is_fuel_type
         """
         if is_fuel_type == 'is_gas':
-            return self.f_totalGas(demand) 
+            return self.f_totalGas(demand)
         if is_fuel_type == 'is_coal':
             return self.f_totalCoal(demand)
         if is_fuel_type == 'is_oil':
@@ -1033,8 +1033,8 @@ class bidStack(object):
             return self.f_totalGeothermal(demand)
         if is_fuel_type == 'is_biomass':
             return self.f_totalBiomass(demand)
-    
-    
+
+
     def returnTotalFuelConsumption(self, demand, is_fuel_type):
         """ Given demand and is_fuel_type inputs, return the total MW of online generation of is_fuel_type.
         ---
@@ -1043,7 +1043,7 @@ class bidStack(object):
         return : total amount of fuel consumption of type is_fuel_type
         """
         if is_fuel_type == 'is_gas':
-            return self.f_totalConsGas(demand) 
+            return self.f_totalConsGas(demand)
         if is_fuel_type == 'is_coal':
             return self.f_totalConsCoal(demand)
         if is_fuel_type == 'is_oil':
@@ -1056,8 +1056,8 @@ class bidStack(object):
             return self.f_totalConsGeothermal(demand)
         if is_fuel_type == 'is_biomass':
             return self.f_totalConsBiomass(demand)
-      
-    
+
+
     def calcFullMeritOrder(self):
         """ Calculates the base_ and marg_ co2, so2, nox, and coal_mix, where "base_" represents the online "base load" that does not change with marginal changes in demand and "marg_" represents the marginal portion of the merit order that does change with marginal changes in demand. The calculation of base_ and marg_ changes depending on whether the minimum output constraint (the include_min_output variable) is being used. In general, "base" is a value (e.g. 'full_gen_cost_tot_base' has units [$], and 'full_co2_base' has units [kg]) while "marg" is a rate (e.g. 'full_gen_cost_tot_marg' has units [$/MWh], and 'full_co2_marg' has units [kg/MWh]). When the dispatch object solves the dispatch, it calculates the total emissions for one time period as 'full_co2_base' + 'full_co2_marg' * (marginal generation MWh) to end up with units of [kg].
         ---
@@ -1068,22 +1068,22 @@ class bidStack(object):
         weight_mindowntime_units = 1 - weight_marginal_unit
         #INCLUDING MIN OUTPUT
         if self.include_min_output:
-            
+
             #total production cost
             df['full_gen_cost_tot_base'] = 0.1*df.a.apply(self.returnTotalCost) + 0.9*df.s.apply(self.returnTotalCost) + df.s.apply(self.returnMarginalGenerator, args=('gen_cost',)) * df.s.apply(self.returnMarginalGenerator, args=('min_out',)) #calculate the base production cost [$]
             df['full_gen_cost_tot_marg'] = ((df.s.apply(self.returnTotalCost) - df.a.apply(self.returnTotalCost)) / (df.s-df.a) * (df.min_out/(df.f-df.s)) + df.s.apply(self.returnMarginalGenerator, args=('gen_cost',)) * (1 -(df.min_out/(df.f-df.s)))).fillna(0.0) #calculate the marginal base production cost [$/MWh]
-            
+
             #emissions
             for e in ['co2', 'so2', 'nox']:
                 df['full_' + e + '_base'] = 0.1*df.a.apply(self.returnTotalEmissions, args=(e,)) + 0.9*df.s.apply(self.returnTotalEmissions, args=(e,)) + df.s.apply(self.returnMarginalGenerator, args=(e,)) * df.s.apply(self.returnMarginalGenerator, args=('min_out',)) #calculate the base emissions [kg]
                 #scipy.multiply(MEF of normal generation, weight of normal genearation) + scipy.multiply(MEF of mdt_reserves, weight of mdt_reserves) where MEF of normal generation is the calculation that happens without accounting for mdt, weight of normal generation is ((f-s) / ((f-s)) + mdt_reserves) and MEF of mdt_reserves is total_value_mdt_emissions / total_mw_mdt_reserves
                 df['full_' + e + '_marg'] = scipy.multiply(  ((df.s.apply(self.returnTotalEmissions, args=(e,)) - df.a.apply(self.returnTotalEmissions, args=(e,))) / (df.s-df.a) * (df.min_out/(df.f-df.s)) + df.s.apply(self.returnMarginalGenerator, args=(e,)) * (1 -(df.min_out/(df.f-df.s)))).fillna(0.0)  ,    weight_marginal_unit  ) + scipy.multiply(  scipy.divide(scipy.maximum(0, - (df.f.apply(self.returnTotalEmissions_Coal, args=(e,)) - self.returnTotalEmissions_Coal(self.coal_mdt_demand_threshold, e)))  ,  scipy.maximum(0, - (df.f.apply(self.returnTotalFuelMix, args=(('is_coal'),)) - self.returnTotalFuelMix(self.coal_mdt_demand_threshold, 'is_coal')))).fillna(0.0).replace(scipy.inf, 0.0)  ,  weight_mindowntime_units  )
-            
+
             #emissions damages
             df['full_dmg_easiur_base'] = 0.1*df.a.apply(self.returnTotalEasiurDamages) + 0.9*df.s.apply(self.returnTotalEasiurDamages) + df.s.apply(self.returnMarginalGenerator, args=('dmg_easiur',)) * df.s.apply(self.returnMarginalGenerator, args=('min_out',)) #calculate the base easiur damages [$]
             #scipy.multiply(MEF of normal generation, weight of normal genearation) + scipy.multiply(MEF of mdt_reserves, weight of mdt_reserves) where MEF of normal generation is the calculation that happens without accounting for mdt, weight of normal generation is ((f-s) / ((f-s)) + mdt_reserves) and MEF of mdt_reserves is total_value_mdt_emissions / total_mw_mdt_reserves
             df['full_dmg_easiur_marg'] = scipy.multiply(  ((df.s.apply(self.returnTotalEasiurDamages) - df.a.apply(self.returnTotalEasiurDamages)) / (df.s-df.a) * (df.min_out/(df.f-df.s)) + df.s.apply(self.returnMarginalGenerator, args=('dmg_easiur',)) * (1 -(df.min_out/(df.f-df.s)))).fillna(0.0)  ,  weight_marginal_unit  ) + scipy.multiply(  scipy.divide(scipy.maximum(0, - (df.f.apply(self.returnTotalEasiurDamages_Coal) - self.returnTotalEasiurDamages_Coal(self.coal_mdt_demand_threshold)))  ,  scipy.maximum(0, - (df.f.apply(self.returnTotalFuelMix, args=(('is_coal'),)) - self.returnTotalFuelMix(self.coal_mdt_demand_threshold, 'is_coal')))).fillna(0.0).replace(scipy.inf, 0.0)  ,  weight_mindowntime_units  )
-            
+
             #fuel mix
             for fl in ['gas', 'coal', 'oil', 'nuclear', 'hydro', 'geothermal', 'biomass']:
             #for fl in ['gas', 'coal', 'oil']:
@@ -1091,14 +1091,14 @@ class bidStack(object):
                 #scipy.multiply(dmgs of normal generation, weight of normal genearation) + scipy.multiply(dmgs of mdt_reserves, weight of mdt_reserves) where dmgs of normal generation is the calculation that happens without accounting for mdt, weight of normal generation is ((f-s) / ((f-s)) + mdt_reserves) and dmgs of mdt_reserves is total_value_mdt_reserves / total_mw_mdt_reserves
                 fuel_multiplier = scipy.where(fl=='coal', 1.0, 0.0)
                 df['full_' + fl + '_mix_marg'] = scipy.multiply(  ((df.s.apply(self.returnTotalFuelMix, args=(('is_'+fl),)) - df.a.apply(self.returnTotalFuelMix, args=(('is_'+fl),))) / (df.s-df.a) * (df.min_out/(df.f-df.s)) + df.s.apply(self.returnMarginalGenerator, args=(('is_'+fl),)) * (1 -(df.min_out/(df.f-df.s)))).fillna(0.0)  ,  weight_marginal_unit  )  +  scipy.multiply(  scipy.divide(scipy.maximum(0, - (df.f.apply(self.returnTotalFuelMix, args=(('is_coal'),)) - self.returnTotalFuelMix(self.coal_mdt_demand_threshold, 'is_coal'))), scipy.maximum(0, - (df.f.apply(self.returnTotalFuelMix, args=(('is_coal'),)) - self.returnTotalFuelMix(self.coal_mdt_demand_threshold, 'is_coal')))).fillna(0.0).replace(scipy.inf, 0.0) * fuel_multiplier  ,  weight_mindowntime_units  )
-            
+
             #fuel consumption
             for fl in ['gas', 'coal', 'oil', 'nuclear', 'hydro', 'geothermal', 'biomass']:
                 df['full_' + fl + '_consumption_base'] = 0.1*df.a.apply(self.returnTotalFuelConsumption, args=(('is_'+fl),)) + 0.9*df.s.apply(self.returnTotalFuelConsumption, args=(('is_'+fl),)) + self.df['is_'+fl] * df.s.apply(self.returnMarginalGenerator, args=('heat_rate',)) * df.s.apply(self.returnMarginalGenerator, args=('min_out',)) #calculate the base fuel consumption [mmBtu]
                 #scipy.multiply(mmbtu/mw of normal generation, weight of normal genearation) + scipy.multiply(mmbtu/mw of mdt_reserves, weight of mdt_reserves) where mmbtu/mw of normal generation is the calculation that happens without accounting for mdt, weight of normal generation is ((f-s) / ((f-s)) + mdt_reserves) and mmbtu/mw of mdt_reserves is total_value_mdt_reserves / total_mw_mdt_reserves
                 fuel_multiplier = scipy.where(fl=='coal', 1.0, 0.0)
-                df['full_' + fl + '_consumption_marg'] = scipy.multiply(  ((df.s.apply(self.returnTotalFuelConsumption, args=('is_'+fl,)) - df.a.apply(self.returnTotalFuelConsumption, args=('is_'+fl,))) / (df.s-df.a) * (df.min_out/(df.f-df.s)) + df.s.apply(self.returnMarginalGenerator, args=('is_'+fl,)) * df.s.apply(self.returnMarginalGenerator, args=('heat_rate',)) * (1 -(df.min_out/(df.f-df.s)))).fillna(0.0)  ,  weight_marginal_unit  )  +  scipy.multiply(  scipy.divide(scipy.maximum(0, - (df.f.apply(self.returnTotalFuelConsumption, args=(('is_coal'),)) - self.returnTotalFuelConsumption(self.coal_mdt_demand_threshold, 'is_coal'))), scipy.maximum(0, - (df.f.apply(self.returnTotalFuelMix, args=(('is_coal'),)) - self.returnTotalFuelMix(self.coal_mdt_demand_threshold, 'is_coal')))).fillna(0.0).replace(scipy.inf, 0.0) * fuel_multiplier ,  weight_mindowntime_units  )         
-        
+                df['full_' + fl + '_consumption_marg'] = scipy.multiply(  ((df.s.apply(self.returnTotalFuelConsumption, args=('is_'+fl,)) - df.a.apply(self.returnTotalFuelConsumption, args=('is_'+fl,))) / (df.s-df.a) * (df.min_out/(df.f-df.s)) + df.s.apply(self.returnMarginalGenerator, args=('is_'+fl,)) * df.s.apply(self.returnMarginalGenerator, args=('heat_rate',)) * (1 -(df.min_out/(df.f-df.s)))).fillna(0.0)  ,  weight_marginal_unit  )  +  scipy.multiply(  scipy.divide(scipy.maximum(0, - (df.f.apply(self.returnTotalFuelConsumption, args=(('is_coal'),)) - self.returnTotalFuelConsumption(self.coal_mdt_demand_threshold, 'is_coal'))), scipy.maximum(0, - (df.f.apply(self.returnTotalFuelMix, args=(('is_coal'),)) - self.returnTotalFuelMix(self.coal_mdt_demand_threshold, 'is_coal')))).fillna(0.0).replace(scipy.inf, 0.0) * fuel_multiplier ,  weight_mindowntime_units  )
+
         #EXCLUDING MIN OUTPUT
         if not self.include_min_output:
             #total production cost
@@ -1120,7 +1120,7 @@ class bidStack(object):
             for fl in ['gas', 'coal', 'oil', 'nuclear', 'hydro', 'geothermal', 'biomass']:
                 df['full_' + fl + '_consumption_base'] = df.s.apply(self.returnTotalFuelConsumption, args=(('is_'+fl),)) #calculate the base fuel_consumption, which is now the fuel consumption of the generators in the merit order below the marginal unit [MWh]
                 fuel_multiplier = scipy.where(fl=='coal', 1.0, 0.0)
-                df['full_' + fl + '_consumption_marg'] = scipy.multiply(  df.s.apply(self.returnMarginalGenerator, args=('is_'+fl,)) * df.s.apply(self.returnMarginalGenerator, args=('heat_rate',))  ,  weight_marginal_unit  )  +  scipy.multiply(  scipy.divide(scipy.maximum(0, - (df.f.apply(self.returnTotalFuelConsumption, args=(('is_coal'),)) - self.returnTotalFuelConsumption(self.coal_mdt_demand_threshold, 'is_coal'))), scipy.maximum(0, - (df.f.apply(self.returnTotalFuelMix, args=(('is_coal'),)) - self.returnTotalFuelMix(self.coal_mdt_demand_threshold, 'is_coal')))).fillna(0.0).replace(scipy.inf, 0.0) * fuel_multiplier ,  weight_mindowntime_units  )   
+                df['full_' + fl + '_consumption_marg'] = scipy.multiply(  df.s.apply(self.returnMarginalGenerator, args=('is_'+fl,)) * df.s.apply(self.returnMarginalGenerator, args=('heat_rate',))  ,  weight_marginal_unit  )  +  scipy.multiply(  scipy.divide(scipy.maximum(0, - (df.f.apply(self.returnTotalFuelConsumption, args=(('is_coal'),)) - self.returnTotalFuelConsumption(self.coal_mdt_demand_threshold, 'is_coal'))), scipy.maximum(0, - (df.f.apply(self.returnTotalFuelMix, args=(('is_coal'),)) - self.returnTotalFuelMix(self.coal_mdt_demand_threshold, 'is_coal')))).fillna(0.0).replace(scipy.inf, 0.0) * fuel_multiplier ,  weight_mindowntime_units  )
         #update the master dataframe df
         self.df = df
 
@@ -1137,10 +1137,10 @@ class bidStack(object):
 
     def createTotalInterpolationFunctionsFull(self):
         """ Creates interpolation functions for the full total data (i.e. total cost, total emissions, etc.) depending on total demand.
-        """       
-        test = self.df.copy()      
+        """
+        test = self.df.copy()
         #cost
-        self.f_totalCostFull = scipy.interpolate.interp1d(test.demand, test['full_gen_cost_tot_base'] + (test['demand'] - test['s']) * test['full_gen_cost_tot_marg'])  
+        self.f_totalCostFull = scipy.interpolate.interp1d(test.demand, test['full_gen_cost_tot_base'] + (test['demand'] - test['s']) * test['full_gen_cost_tot_marg'])
         #emissions and health damages
         self.f_totalCO2Full = scipy.interpolate.interp1d(test.demand, test['full_co2_base'] + (test['demand'] - test['s']) * test['full_co2_marg'])
         self.f_totalSO2Full = scipy.interpolate.interp1d(test.demand, test['full_so2_base'] + (test['demand'] - test['s']) * test['full_so2_marg'])
@@ -1172,7 +1172,7 @@ class bidStack(object):
         return : total emissions = base emissions (marginal unit) + marginal emissions (marginal unit) * (D - s)
         """
         if col_type == 'gen_cost_tot':
-            return self.f_totalCostFull(demand)       
+            return self.f_totalCostFull(demand)
         if col_type == 'co2':
             return self.f_totalCO2Full(demand)
         if col_type == 'so2':
@@ -1182,7 +1182,7 @@ class bidStack(object):
         if col_type == 'dmg_easiur':
             return self.f_totalDmgFull(demand)
         if col_type == 'gas_mix':
-            return self.f_totalGasFull(demand) 
+            return self.f_totalGasFull(demand)
         if col_type == 'coal_mix':
             return self.f_totalCoalFull(demand)
         if col_type == 'oil_mix':
@@ -1196,7 +1196,7 @@ class bidStack(object):
         if col_type == 'biomass_mix':
             return self.f_totalBiomassFull(demand)
         if col_type == 'gas_consumption':
-            return self.f_totalConsGasFull(demand) 
+            return self.f_totalConsGasFull(demand)
         if col_type == 'coal_consumption':
             return self.f_totalConsCoalFull(demand)
         if col_type == 'oil_consumption':
@@ -1209,8 +1209,8 @@ class bidStack(object):
             return self.f_totalConsGeothermalFull(demand)
         if col_type == 'biomass_consumption':
             return self.f_totalConsBiomassFull(demand)
-    
-    
+
+
     def plotBidStack(self, df_column, plot_type, fig_dim = (4,4), production_cost_only=True):
         """ Given a name for the df_column, plots a bid stack with demand on the x-axis and the df_column data on the y-axis. For example bidStack.plotBidStack('gen_cost', 'bar') would output the traditional merit order curve.
         ---
@@ -1219,7 +1219,7 @@ class bidStack(object):
         production_cost_only : if True, the dispatch cost will exclude carbon, so2 and nox taxes. if False, all costs will be included
         fig_dim = figure dimensions (#,#)
         return : bid stack plot
-        """	
+        """
         #color for any generators without a fuel_color entry
         empty_color = '#dd1c77'
         #create color array for the emissions cost
@@ -1231,7 +1231,7 @@ class bidStack(object):
         color_2 = color_2.replace('#dd1c77', '#C0C0C0')
         color_2 = color_2.replace('#bcbddc', '#E0E0E0')
         #set up the y data
-        y_data_e = self.df.gen_cost * 0 #emissions bar chart. Default is zero unless not production_cost_only                    
+        y_data_e = self.df.gen_cost * 0 #emissions bar chart. Default is zero unless not production_cost_only
         if df_column == 'gen_cost':
             y_lab = 'Generation Cost [$/MWh]'
             y_data = self.df[df_column] - (self.df.co2_cost + self.df.so2_cost + self.df.nox_cost) #cost excluding emissions taxes
@@ -1260,7 +1260,7 @@ class bidStack(object):
             #    color_legend.append(matplotlib.patches.Patch(color=c, label=self.df.fuel_type[self.df.fuel_color==c].iloc[0]))
             #ax.legend(handles=color_legend, bbox_to_anchor=(0.5, 1.2), loc='upper center', ncol=3, fancybox=True, shadow=True)
         else:
-            print '***Error: enter valid argument for plot_type'
+            print( '***Error: enter valid argument for plot_type')
             pass
         matplotlib.pylab.ylim(ymax=y_data.quantile(0.98)) #take the 98th percentile for the y limits.
         #ax.set_xlim(self.hist_dispatch.demand.quantile(0.025)*0.001, self.hist_dispatch.demand.quantile(0.975)*0.001) #take the 2.5th and 97.5th percentiles for the x limits
@@ -1281,7 +1281,7 @@ class bidStack(object):
                 ax.set_yticks((0, 15, 30, 45, 60))
             if not production_cost_only:
                 ax.set_ylim(0, 160)
-                ax.set_yticks((0, 30, 60, 90, 120, 150))    
+                ax.set_yticks((0, 30, 60, 90, 120, 150))
         if df_column == 'co2':
             ax.set_ylim(0, 1300)
             ax.set_yticks((250, 500, 750, 1000, 1250))
@@ -1290,18 +1290,18 @@ class bidStack(object):
         matplotlib.pylab.tight_layout()
         matplotlib.pylab.show()
         return f
-    
-    
-    def plotBidStackMultiColor(self, df_column, plot_type, fig_dim = (4,4), production_cost_only=True):    
-        bs_df_fuel_color = bs.df.copy()
-        
+
+
+    def plotBidStackMultiColor(self, df_column, plot_type, fig_dim = (4,4), production_cost_only=True):
+        bs_df_fuel_color = self.df.copy()
+
         c = {'ng': {'cc': '#377eb8', 'ct': '#377eb8', 'gt': '#4daf4a', 'st': '#984ea3'}, 'sub': {'st': '#e41a1c'}, 'lig': {'st': '#ffff33'}, 'bit': {'st': '#ff7f00'}, 'rc': {'st': '#252525'}}
-                    
+
         bs_df_fuel_color['fuel_color'] = '#bcbddc'
-        for c_key in c.iterkeys():
-            for p_key in c[c_key].iterkeys():
+        for c_key in  iter(c.keys()):
+            for p_key in  iter(c[c_key].keys()):
                 bs_df_fuel_color.loc[(bs_df_fuel_color.fuel == c_key) & (bs_df_fuel_color.prime_mover == p_key), 'fuel_color'] = c[c_key][p_key]
-        
+
         #color for any generators without a fuel_color entry
         empty_color = '#dd1c77'
         #create color array for the emissions cost
@@ -1313,47 +1313,47 @@ class bidStack(object):
         #color_2 = color_2.replace('#dd1c77', '#C0C0C0')
         #color_2 = color_2.replace('#bcbddc', '#E0E0E0')
         #set up the y data
-        y_data_e = bs.df.gen_cost * 0 #emissions bar chart. Default is zero unless not production_cost_only                    
+        y_data_e = self.df.gen_cost * 0 #emissions bar chart. Default is zero unless not production_cost_only
         if df_column == 'gen_cost':
             y_lab = 'Generation Cost [$/MWh]'
-            y_data = bs.df[df_column] - (bs.df.co2_cost + bs.df.so2_cost + bs.df.nox_cost) #cost excluding emissions taxes
+            y_data = self.df[df_column] - (self.df.co2_cost + self.df.so2_cost + self.df.nox_cost) #cost excluding emissions taxes
             if not production_cost_only:
-                y_data_e = bs.df[df_column]
+                y_data_e = self.df[df_column]
         if df_column == 'co2':
             y_lab = 'CO$_2$ Emissions [kg/MWh]'
-            y_data = bs.df[df_column + str(bs.time)]
+            y_data = self.df[df_column + str(self.time)]
         if df_column == 'so2':
             y_lab = 'SO$_2$ Emissions [kg/MWh]'
-            y_data = bs.df[df_column + str(bs.time)]
+            y_data = self.df[df_column + str(self.time)]
         if df_column == 'nox':
             y_lab = 'NO$_x$ Emissions [kg/MWh]'
-            y_data = bs.df[df_column + str(bs.time)]
+            y_data = self.df[df_column + str(self.time)]
         #create the data to be stacked on y_data to show the cost of the emission tax
         matplotlib.pylab.clf()
         f = matplotlib.pylab.figure(figsize=fig_dim)
         ax = f.add_subplot(111)
         if plot_type == 'line':
-            ax.plot( bs.df.demand/1000, y_data, linewidth=2.5)
+            ax.plot( self.df.demand/1000, y_data, linewidth=2.5)
         elif plot_type == 'bar':
-            ax.bar(bs.df.demand/1000, height=y_data_e, width=-scipy.maximum(0.2, bs.df['mw' + str(bs.time)]/1000), color=color_2, align='edge'), ax.bar(bs.df.demand/1000, height=y_data, width=-scipy.maximum(0.2, bs.df['mw' + str(bs.time)]/1000), color=color_2, align='edge')
+            ax.bar(self.df.demand/1000, height=y_data_e, width=-scipy.maximum(0.2, self.df['mw' + str(self.time)]/1000), color=color_2, align='edge'), ax.bar(self.df.demand/1000, height=y_data, width=-scipy.maximum(0.2, self.df['mw' + str(self.time)]/1000), color=color_2, align='edge')
             ##add legend above chart
             color_legend = []
             for c in bs_df_fuel_color.fuel_color.unique():
                 color_legend.append(matplotlib.patches.Patch(color=c, label=bs_df_fuel_color.fuel[bs_df_fuel_color.fuel_color==c].iloc[0] + '_' + bs_df_fuel_color.prime_mover[bs_df_fuel_color.fuel_color==c].iloc[0]))
             ax.legend(handles=color_legend, bbox_to_anchor=(0.5, 1.2), loc='upper center', ncol=3, fancybox=True, shadow=True)
         else:
-            print '***Error: enter valid argument for plot_type'
+            print( '***Error: enter valid argument for plot_type')
             pass
         matplotlib.pylab.ylim(ymax=y_data.quantile(0.98)) #take the 98th percentile for the y limits.
         #ax.set_xlim(bs.hist_dispatch.demand.quantile(0.025)*0.001, bs.hist_dispatch.demand.quantile(0.975)*0.001) #take the 2.5th and 97.5th percentiles for the x limits
-        ax.set_xlim(0, bs.hist_dispatch.demand.quantile(0.975)*0.001) #take 0 and the 97.5th percentiles for the x limits
+        ax.set_xlim(0, self.hist_dispatch.demand.quantile(0.975)*0.001) #take 0 and the 97.5th percentiles for the x limits
         if df_column == 'gen_cost':
             if production_cost_only:
                 ax.set_ylim(0, 65)
                 ax.set_yticks((0, 15, 30, 45, 60))
             if not production_cost_only:
                 ax.set_ylim(0, 160)
-                ax.set_yticks((0, 30, 60, 90, 120, 150))    
+                ax.set_yticks((0, 30, 60, 90, 120, 150))
         if df_column == 'co2':
             ax.set_ylim(0, 1300)
             ax.set_yticks((250, 500, 750, 1000, 1250))
@@ -1362,18 +1362,18 @@ class bidStack(object):
         matplotlib.pylab.tight_layout()
         matplotlib.pylab.show()
         return f
-    
-    
-    def plotBidStackMultiColor_Coal_NGCC_NGGT_NGOther(self, df_column, plot_type, fig_dim = (4,4), production_cost_only=True):    
-        bs_df_fuel_color = bs.df.copy()
-        
+
+
+    def plotBidStackMultiColor_Coal_NGCC_NGGT_NGOther(self, df_column, plot_type, fig_dim = (4,4), production_cost_only=True):
+        bs_df_fuel_color = self.df.copy()
+
         c = {'ng': {'cc': '#1b9e77', 'ct': '#1b9e77', 'gt': '#fc8d62', 'st': '#8da0cb'}, 'sub': {'st': '#252525'}, 'lig': {'st': '#252525'}, 'bit': {'st': '#252525'}, 'rc': {'st': '#252525'}}
-                    
+
         bs_df_fuel_color['fuel_color'] = '#bcbddc'
-        for c_key in c.iterkeys():
-            for p_key in c[c_key].iterkeys():
+        for c_key in iter(c.keys()):
+            for p_key in iter(c[c_key].keys()):
                 bs_df_fuel_color.loc[(bs_df_fuel_color.fuel == c_key) & (bs_df_fuel_color.prime_mover == p_key), 'fuel_color'] = c[c_key][p_key]
-        
+
         #color for any generators without a fuel_color entry
         empty_color = '#dd1c77'
         #hold the colors
@@ -1387,7 +1387,7 @@ class bidStack(object):
         color_3 = color_3.replace('#dd1c77', '#C0C0C0')
         color_3 = color_3.replace('#bcbddc', '#E0E0E0')
         #set up the y data
-        y_data_e = self.df.gen_cost * 0 #emissions bar chart. Default is zero unless not production_cost_only                    
+        y_data_e = self.df.gen_cost * 0 #emissions bar chart. Default is zero unless not production_cost_only
         if df_column == 'gen_cost':
             y_lab = 'Generation Cost [$/MWh]'
             y_data = self.df[df_column] - (self.df.co2_cost + self.df.so2_cost + self.df.nox_cost) #cost excluding emissions taxes
@@ -1416,7 +1416,7 @@ class bidStack(object):
             #    color_legend.append(matplotlib.patches.Patch(color=c, label=self.df.fuel_type[self.df.fuel_color==c].iloc[0]))
             #ax.legend(handles=color_legend, bbox_to_anchor=(0.5, 1.2), loc='upper center', ncol=3, fancybox=True, shadow=True)
         else:
-            print '***Error: enter valid argument for plot_type'
+            print( '***Error: enter valid argument for plot_type')
             pass
         matplotlib.pylab.ylim(ymax=y_data.quantile(0.98)) #take the 98th percentile for the y limits.
         #ax.set_xlim(self.hist_dispatch.demand.quantile(0.025)*0.001, self.hist_dispatch.demand.quantile(0.975)*0.001) #take the 2.5th and 97.5th percentiles for the x limits
@@ -1440,7 +1440,7 @@ class bidStack(object):
                 ax.set_yticks((0, 15, 30, 45, 60))
             if not production_cost_only:
                 ax.set_ylim(0, 120)
-                ax.set_yticks((0, 30, 60, 90, 120))    
+                ax.set_yticks((0, 30, 60, 90, 120))
         if df_column == 'co2':
             ax.set_ylim(0, 1300)
             ax.set_yticks((250, 500, 750, 1000, 1250))
@@ -1449,11 +1449,11 @@ class bidStack(object):
         matplotlib.pylab.tight_layout()
         matplotlib.pylab.show()
         return f
-    
-    
-    
-    
-    
+
+
+
+
+
 
 class dispatch(object):
     def __init__(self, bid_stack_object, demand_df, time_array=0):
@@ -1461,15 +1461,15 @@ class dispatch(object):
         ---
         gen_data_object : a object defined by class generatorData
         bid_stack_object : a bid stack object defined by class bidStack
-        demand_df : a dataframe with the demand data 
+        demand_df : a dataframe with the demand data
         time_array : a scipy array containing the time intervals that we are changing fuel price etc. for. E.g. if we are doing weeks, then time_array=scipy.arange(52) + 1 to get an array of (1, 2, 3, ..., 51, 52)
         """
         self.bs = bid_stack_object
         self.df = demand_df
         self.time_array = time_array
         self.addDFColumns()
-        
-               
+
+
     def addDFColumns(self):
         """ Add additional columns to self.df to hold the results of the dispatch. New cells initially filled with zeros
         ---
@@ -1495,7 +1495,7 @@ class dispatch(object):
             end_date = self.df.datetime.max()
         else:
             end_date = pandas._libs.tslib.Timestamp(end_date)
-        #slice of self.df within the desired dates    
+        #slice of self.df within the desired dates
         df_slice = self.df[(self.df.datetime >= pandas._libs.tslib.Timestamp(start_date)) & (self.df.datetime < pandas._libs.tslib.Timestamp(end_date))].copy(deep=True)
         #calculate the dispatch for the slice by applying the return###### functions of the bstack object
         df_slice['gen_cost_marg'] = df_slice.demand.apply(bstack.returnMarginalGenerator, args=('gen_cost',)) #generation cost of the marginal generator ($/MWh)
@@ -1509,10 +1509,10 @@ class dispatch(object):
         df_slice['coal_mix_marg'] = df_slice.demand.apply(bstack.returnFullMarginalValue, args=('coal_mix',))
         df_slice['marg_gen_fuel_type'] = df_slice.demand.apply(bstack.returnMarginalGenerator, args=('fuel_type',))
         df_slice['mmbtu_coal'] = df_slice.demand.apply(bstack.returnFullTotalValue, args=('coal_consumption',)) #total coal mmBtu
-        df_slice['mmbtu_gas'] = df_slice.demand.apply(bstack.returnFullTotalValue, args=('gas_consumption',)) #total gas mmBtu        
+        df_slice['mmbtu_gas'] = df_slice.demand.apply(bstack.returnFullTotalValue, args=('gas_consumption',)) #total gas mmBtu
         df_slice['mmbtu_oil'] = df_slice.demand.apply(bstack.returnFullTotalValue, args=('oil_consumption',)) #total oil mmBtu
         self.df[(self.df.datetime >= pandas._libs.tslib.Timestamp(start_date)) & (self.df.datetime < pandas._libs.tslib.Timestamp(end_date))] = df_slice
-  
+
 
     def createDfMdtCoal(self, demand_threshold, time_t):
         """ For a given demand threshold, creates a new version of the generator data that approximates the minimum down time constraint for coal plants
@@ -1525,8 +1525,8 @@ class dispatch(object):
         #get the orispl_unit information for the generators you need to adjust
         coal_mdt_orispl_unit_list = list(self.bs.df[(self.bs.df.fuel_type=='coal') & (self.bs.df.demand <= demand_threshold)].orispl_unit.copy().values)
         coal_mdt_gd_idx = self.bs.df_0[self.bs.df_0.orispl_unit.isin(coal_mdt_orispl_unit_list)].index
-        
-        #create a new set of generator data where there is a large coal unit at the very bottom representing the baseload of the coal generators if they do not turn down below their minimum output, and all of the coal generators have their capacity reduced to (1-min_output).         
+
+        #create a new set of generator data where there is a large coal unit at the very bottom representing the baseload of the coal generators if they do not turn down below their minimum output, and all of the coal generators have their capacity reduced to (1-min_output).
         df_mdt_coal = self.bs.df_0[self.bs.df_0.orispl_unit.isin(coal_mdt_orispl_unit_list)][['orispl_unit', 'fuel', 'fuel_type', 'prime_mover', 'vom', 'min_out_multiplier', 'min_out', 'co2%i'%t, 'so2%i'%t, 'nox%i'%t, 'heat_rate%i'%t, 'mw%i'%t, 'fuel_price%i'%t, 'dmg%i'%t]].copy()
         df_mdt_coal = df_mdt_coal[df_mdt_coal.orispl_unit != 'coal_0']
         #create a pandas Series that will hold the large dummy coal unit that represents coal base load
@@ -1534,8 +1534,8 @@ class dispatch(object):
         df_mdt_coal_base[['orispl_unit', 'fuel', 'fuel_type', 'prime_mover', 'min_out_multiplier', 'min_out']] = ['coal_0', 'sub', 'coal', 'st', 0.0, 0.0]
         #columns for the week we are currently solving
         t_columns = ['orispl_unit', 'fuel_type', 'prime_mover', 'vom', 'min_out_multiplier', 'co2%i'%t, 'so2%i'%t, 'nox%i'%t, 'heat_rate%i'%t, 'mw%i'%t, 'fuel_price%i'%t, 'dmg%i'%t]
-        df_mdt_coal_base_temp = df_mdt_coal[t_columns].copy()       
-        #the capacity of the dummy coal unit will be the sum of the minimum output of all the coal units      
+        df_mdt_coal_base_temp = df_mdt_coal[t_columns].copy()
+        #the capacity of the dummy coal unit will be the sum of the minimum output of all the coal units
         df_mdt_coal_base_temp[['mw%i'%t]] = df_mdt_coal_base_temp['mw%i'%t] * df_mdt_coal_base_temp.min_out_multiplier
         #the vom, co2, so2, nox, heat_rate, fuel_price, and dmg of the dummy unit will equal the weighted average of the other coal plants
         weighted_cols = df_mdt_coal_base_temp.columns.drop(['orispl_unit', 'fuel_type', 'prime_mover', 'min_out_multiplier', 'mw%i'%t])
@@ -1545,15 +1545,15 @@ class dispatch(object):
         df_mdt_coal_base[['vom', 'co2%i'%t, 'so2%i'%t, 'nox%i'%t, 'heat_rate%i'%t, 'mw%i'%t, 'fuel_price%i'%t, 'dmg%i'%t]] = df_mdt_coal_base_temp[['vom', 'co2%i'%t, 'so2%i'%t, 'nox%i'%t, 'heat_rate%i'%t, 'mw%i'%t, 'fuel_price%i'%t, 'dmg%i'%t]]
         #reduce the capacity of the other coal plants by their minimum outputs (since their minimum outputs are now a part of coal_0)
         df_mdt_coal.loc[df_mdt_coal.fuel_type == 'coal','mw%i'%t] = df_mdt_coal[df_mdt_coal.fuel_type == 'coal'][['mw%i'%t]].multiply((1-df_mdt_coal[df_mdt_coal.fuel_type == 'coal'].min_out_multiplier), axis='index')
-        #add coal_0 to df_mdt_coal    
+        #add coal_0 to df_mdt_coal
         df_mdt_coal = df_mdt_coal.append(df_mdt_coal_base, ignore_index = True)
         #change the minimum output of the coal plants to 0.0
         df_mdt_coal.loc[df_mdt_coal.fuel_type == 'coal',['min_out_multiplier', 'min_out']] = [0.0, 0.0]
         #update the index to match the original bidStack
         df_mdt_coal.index = coal_mdt_gd_idx
         return df_mdt_coal
-    
-    
+
+
     def calcMdtCoalEventsT(self, start_datetime, end_datetime, coal_merit_order_input_df):
         """ For a given demand threshold, creates a new version of the generator data that approximates the minimum down time constraint for coal plants
         ---
@@ -1562,23 +1562,23 @@ class dispatch(object):
         """
         #the function below returns the demand value of the merit_order_input_df that is just above the demand_input_scalar
         def bisect_column(demand_input_scalar, merit_order_input_df):
-            try: 
-                out = coal_merit_order_input_df.iloc[bisect_left(list(coal_merit_order_input_df.demand),demand_input_scalar)].demand   
+            try:
+                out = coal_merit_order_input_df.iloc[bisect_left(list(coal_merit_order_input_df.demand),demand_input_scalar)].demand
         #if demand_threshold exceeds the highest coal_merit_order.demand value (i.e. all of min output constraints are binding for coal)
             except:
                 out = coal_merit_order_input_df.iloc[-1].demand
-            return out  
-        #bring in the coal mdt events calculated in generatorData        
+            return out
+        #bring in the coal mdt events calculated in generatorData
         mdt_coal_events_t = self.bs.mdt_coal_events.copy()
         #slice the coal mdt events based on the current start/end section of the dispatch solution
         mdt_coal_events_t = mdt_coal_events_t[(mdt_coal_events_t.end >= start_datetime) & (mdt_coal_events_t.start <= end_datetime)]
-        #translate the demand_thresholds into the next highest demand data in the merit_order_input_df. This will allow us to reduce the number of bidStacks we need to generate. E.g. if two days have demand thresholds of 35200 and 35250 but the next highest demand in the coal merit order is 36000, then both of these days can use the 36000 mdt_bidStack, and we can recalculate the bidStack once instead of twice. 
+        #translate the demand_thresholds into the next highest demand data in the merit_order_input_df. This will allow us to reduce the number of bidStacks we need to generate. E.g. if two days have demand thresholds of 35200 and 35250 but the next highest demand in the coal merit order is 36000, then both of these days can use the 36000 mdt_bidStack, and we can recalculate the bidStack once instead of twice.
         mdt_coal_events_t[['demand_threshold']] = mdt_coal_events_t.demand_threshold.apply(bisect_column, args=(coal_merit_order_input_df,))
         return mdt_coal_events_t
-    
-              
+
+
     def calcDispatchAll(self):
-        """ Runs calcDispatchSlice for each time slice in the fuel_prices_over_time dataframe, creating a new bidstack each time. So, fuel_prices_over_time contains multipliers (e.g. 0.95 or 1.14) for each fuel type (e.g. ng, lig, nuc) for different slices of time (e.g. start_date = '2014-01-07' and end_date = '2014-01-14'). We use these multipliers to change the fuel prices seen by each generator in the bidStack object. After changing each generator's fuel prices (using bidStack.updateFuelPrices), we re-calculate the bidStack merit order (using bidStack.calcGenCost), and then calculate the dispatch for the slice of time defined by the fuel price multipliers. This way, instead of calculating the dispatch over the whole year, we can calculate it in chunks of time (e.g. weeks) where each chunk of time has different fuel prices for the generators. 
+        """ Runs calcDispatchSlice for each time slice in the fuel_prices_over_time dataframe, creating a new bidstack each time. So, fuel_prices_over_time contains multipliers (e.g. 0.95 or 1.14) for each fuel type (e.g. ng, lig, nuc) for different slices of time (e.g. start_date = '2014-01-07' and end_date = '2014-01-14'). We use these multipliers to change the fuel prices seen by each generator in the bidStack object. After changing each generator's fuel prices (using bidStack.updateFuelPrices), we re-calculate the bidStack merit order (using bidStack.calcGenCost), and then calculate the dispatch for the slice of time defined by the fuel price multipliers. This way, instead of calculating the dispatch over the whole year, we can calculate it in chunks of time (e.g. weeks) where each chunk of time has different fuel prices for the generators.
         Right now the only thing changing per chunk of time is the fuel prices based on trends in national commodity prices. Future versions might try and do regional price trends and add things like maintenance downtime or other seasonal factors.
         ---
         fills in the self.df dataframe one time slice at a time
@@ -1589,12 +1589,12 @@ class dispatch(object):
         #otherwise, run the dispatch in time slices, updating the bid stack each slice
         else:
             for t in self.time_array:
-                print str(round(t/float(len(self.time_array)),3)*100) + '% Complete'
+                print( str(round(t/float(len(self.time_array)),3)*100) + '% Complete')
                 #update the bidStack object to the current week
                 self.bs.updateTime(t)
                 #calculate the dispatch for the time slice over which the updated fuel prices are relevant
-                start = (datetime.datetime.strptime(str(self.bs.year) + '-01-01', '%Y-%m-%d') + datetime.timedelta(days=7.05*(t-1)-1)).strftime('%Y-%m-%d') 
-                end = (datetime.datetime.strptime(str(self.bs.year) + '-01-01', '%Y-%m-%d') + datetime.timedelta(days=7.05*(t)-1)).strftime('%Y-%m-%d') 
+                start = (datetime.datetime.strptime(str(self.bs.year) + '-01-01', '%Y-%m-%d') + datetime.timedelta(days=7.05*(t-1)-1)).strftime('%Y-%m-%d')
+                end = (datetime.datetime.strptime(str(self.bs.year) + '-01-01', '%Y-%m-%d') + datetime.timedelta(days=7.05*(t)-1)).strftime('%Y-%m-%d')
                 #note that calcDispatchSlice updates self.df, so there is no need to do it in this calcDispatchAll function
                 self.calcDispatchSlice(self.bs, start_date=start ,end_date=end)
                 #coal minimum downtime
@@ -1602,8 +1602,8 @@ class dispatch(object):
                 #define the coal merit order
                 coal_merit_order = self.bs.df[(self.bs.df.fuel_type == 'coal')][['orispl_unit', 'demand']]
                 #slice and bin the coal minimum downtime events
-                events_mdt_coal_t = self.calcMdtCoalEventsT(start, end, coal_merit_order)  
-                #create a dictionary for holding the updated bidStacks, which change depending on the demand_threshold                
+                events_mdt_coal_t = self.calcMdtCoalEventsT(start, end, coal_merit_order)
+                #create a dictionary for holding the updated bidStacks, which change depending on the demand_threshold
                 bs_mdt_dict = {}
                 #for each unique demand_threshold
                 for dt in events_mdt_coal_t.demand_threshold.unique():
@@ -1611,15 +1611,15 @@ class dispatch(object):
                     gd_df_mdt_temp = self.bs.df_0.copy()
                     gd_df_mdt_temp.update(self.createDfMdtCoal(dt, t))
                     #use that updated gd.df to create an updated bidStack object, and store it in the bs_mdt_dict
-                    bs_temp = copy.deepcopy(bs)
+                    bs_temp = copy.deepcopy(self.bs)
                     bs_temp.coal_mdt_demand_threshold = dt
                     bs_temp.updateDf(gd_df_mdt_temp)
                     bs_mdt_dict.update({dt:bs_temp})
                 #for each minimum downtime event, recalculate the dispatch by inputting the bs_mdt_dict bidStacks into calcDispatchSlice to override the existing dp.df results datafram
                 for i, e in events_mdt_coal_t.iterrows():
                     self.calcDispatchSlice(bs_mdt_dict[e.demand_threshold], start_date=e.start ,end_date=e.end)
-                
-        
+
+
 
 
 if __name__ == '__main__':
@@ -1651,23 +1651,23 @@ if __name__ == '__main__':
             eia923_schedule5_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eia\\eia9232015\\EIA923_Schedules_2_3_4_5_M_12_2015_Final_Revision.xlsx'
         if run_year == 2014:
             egrid_data_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eGRID\\egrid2014_data.xlsx'
-            eia923_schedule5_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eia\\eia9232014\\EIA923_Schedules_2_3_4_5_M_12_2014_Final_Revision.xlsx'   
+            eia923_schedule5_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eia\\eia9232014\\EIA923_Schedules_2_3_4_5_M_12_2014_Final_Revision.xlsx'
         if run_year == 2013:
             #use 2014 eGrid because 2012 eGrid doesn't have unit-level information. We risk having no information for plants that retired in 2012 or 2013
             egrid_data_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eGRID\\egrid2014_data.xlsx'
             #note that the downloaded version of EIA923 for 2013 Page 1 and Page 5 have different column headers than all of the other years. I changed these column headers in the actual xlsx file to match the 2012 EIA923
-            eia923_schedule5_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eia\\eia9232013\\EIA923_Schedules_2_3_4_5_2013_Final_Revision.xlsx'       
+            eia923_schedule5_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eia\\eia9232013\\EIA923_Schedules_2_3_4_5_2013_Final_Revision.xlsx'
         if run_year == 2012:
             #use 2014 eGrid because 2012 eGrid doesn't have unit-level information. We risk having no information for plants that retired in 2012 or 2013
             egrid_data_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eGRID\\egrid2014_data.xlsx'
             eia923_schedule5_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eia\\eia9232012\\EIA923_Schedules_2_3_4_5_M_12_2012_Final_Revision.xlsx'
         #run the generator data object
-        gd = generatorData(nerc_region, egrid_fname=egrid_data_xlsx, eia923_fname=eia923_schedule5_xlsx, ferc714IDs_fname=ferc714IDs_csv, ferc714_fname=ferc714_part2_schedule6_csv, cems_folder=cems_folder_path, easiur_fname=easiur_csv_path, include_easiur_damages=True, year=run_year, fuel_commodity_prices_excel_dir=fuel_commodity_prices_xlsx, hist_downtime=False, coal_min_downtime = 12, cems_validation_run=False)   
+        gd = generatorData(nerc_region, egrid_fname=egrid_data_xlsx, eia923_fname=eia923_schedule5_xlsx, ferc714IDs_fname=ferc714IDs_csv, ferc714_fname=ferc714_part2_schedule6_csv, cems_folder=cems_folder_path, easiur_fname=easiur_csv_path, include_easiur_damages=True, year=run_year, fuel_commodity_prices_excel_dir=fuel_commodity_prices_xlsx, hist_downtime=False, coal_min_downtime = 12, cems_validation_run=False)
         #create a shortened version that has only the essentials (so we can pickle)
         gd_short = {'year': gd.year, 'nerc': gd.nerc, 'hist_dispatch': gd.hist_dispatch, 'demand_data': gd.demand_data, 'mdt_coal_events': gd.mdt_coal_events, 'df': gd.df}
-        #save the historical dispatch  
+        #save the historical dispatch
         gd_short.hist_dispatch.to_csv(historical_dispatch_save_folder + '\\%s_%s_hourly_demand_and_fuelmix.csv'%(str(run_year), nerc_region))
-        
+
         for nr in [0]:
         #for nr in [0, 4, 10, 25, 50, 100, 200]: #base case
         #for nr in [2, 6, 8, 15, 20, 30, 40, 60, 80, 125, 150, 1000]: #base case
@@ -1677,15 +1677,13 @@ if __name__ == '__main__':
             bs = bidStack(gd_short, co2_dol_per_kg=(co2_dol_per_ton / 907.185), time=30, dropNucHydroGeo=True, include_min_output=False, mdt_weight=0.5) #NOTE: set dropNucHydroGeo to True if working with data that only looks at fossil fuels (e.g. CEMS)
             #bid_stack_cost = bs.plotBidStackMultiColor('gen_cost', plot_type='bar', fig_dim = (4,4), production_cost_only=True) #plot the merit order
             bid_stack_cost = bs.plotBidStackMultiColor_Coal_NGCC_NGGT_NGOther('gen_cost', plot_type='bar', fig_dim = (4,4), production_cost_only=False) #plot the merit order
-            bid_stack_cost.savefig('C:\\Users\\tdeet\\Documents\\media\\publications\\2018-10 coal gas redispatch\\images_raw\\bid stacks\\fStackCost%s_%s_%sco2_v27.png'%(nerc_region, str(run_year), str(bs.co2_dol_per_kg * 907.185)), dpi=500, bbox_inches='tight')
-            bid_stack_co2 = bs.plotBidStackMultiColor_Coal_NGCC_NGGT_NGOther('co2', plot_type='bar') #plot the merit order 
-            bid_stack_co2.savefig('C:\\Users\\tdeet\\Documents\\media\\publications\\2018-10 coal gas redispatch\\images_raw\\bid stacks\\fStackCo2%s_%s_%sco2_v27.png'%(nerc_region, str(run_year), str(bs.co2_dol_per_kg * 907.185)), dpi=500, bbox_inches='tight')                   
+            bid_stack_cost.savefig('C:\\Users\\mattb\\Documents\\GitHub\\simple_dispatch\\images_raw\\bid stacks\\fStackCost%s_%s_%sco2_v27.png'%(nerc_region, str(run_year), str(bs.co2_dol_per_kg * 907.185)), dpi=500, bbox_inches='tight')
+            bid_stack_co2 = bs.plotBidStackMultiColor_Coal_NGCC_NGGT_NGOther('co2', plot_type='bar') #plot the merit order
+            bid_stack_co2.savefig('C:\\Users\\mattb\\Documents\\GitHub\\simple_dispatch\\images_raw\\bid stacks\\fStackCo2%s_%s_%sco2_v27.png'%(nerc_region, str(run_year), str(bs.co2_dol_per_kg * 907.185)), dpi=500, bbox_inches='tight')
             #run the dispatch object - use the nerc region's merit order (bs), a demand timeseries (gd.demand_data), and a time array (default is array([ 1,  2, ... , 51, 52]) for 52 weeks to run a whole year)
-           
-            dp = dispatch(bs, gd_short.demand_data, time_array=scipy.arange(52)+1) #set up the object
-            #dp = dispatch(bs, gd.demand_data, time_array=scipy.arange(3)+1) #test run          
-            dp.calcDispatchAll() #function that solves the dispatch for each time period in time_array (default for each week of the year)
-            #save dispatch results 
-            dp.df.to_csv(simulated_dispatch_save_folder + '\\dispatch_output_weekly_%s_%s_%sco2_v27_coal_vom_same.csv'%(nerc_region, str(run_year), str(co2_dol_per_ton)), index=False)
-   
 
+            dp = dispatch(bs, gd_short.demand_data, time_array=scipy.arange(52)+1) #set up the object
+            #dp = dispatch(bs, gd.demand_data, time_array=scipy.arange(3)+1) #test run
+            dp.calcDispatchAll() #function that solves the dispatch for each time period in time_array (default for each week of the year)
+            #save dispatch results
+            dp.df.to_csv(simulated_dispatch_save_folder + '\\dispatch_output_weekly_%s_%s_%sco2_v27_coal_vom_same.csv'%(nerc_region, str(run_year), str(co2_dol_per_ton)), index=False)
