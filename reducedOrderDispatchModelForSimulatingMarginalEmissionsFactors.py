@@ -74,9 +74,9 @@ if __name__ == '__main__':
             #run the bidStack object - use information about the generators (from gd_short) to create a merit order (bid stack) of the nerc region's generators
             bs = bidStack(gd_short, co2_dol_per_kg=(co2_dol_per_ton / 907.185), time=30, dropNucHydroGeo=True, include_min_output=False, mdt_weight=0.5) #NOTE: set dropNucHydroGeo to True if working with data that only looks at fossil fuels (e.g. CEMS)
             #produce bid stack plots
-            #bid_stack_cost = bs.plotBidStackMultiColor('gen_cost', plot_type='bar', fig_dim = (4,4), production_cost_only=True) #plot the merit order
+            bid_stack_cost = bs.plotBidStackMultiColor('gen_cost', plot_type='bar', fig_dim = (4,4), production_cost_only=True) #plot the merit order
             #bid_stack_cost = bs.plotBidStackMultiColor('gen_cost', plot_type='bar', fig_dim = (4,4), production_cost_only=False) #plot the merit order
-            #bid_stack_co2 = bs.plotBidStackMultiColor('co2', plot_type='bar') #plot the merit order
+            bid_stack_co2 = bs.plotBidStackMultiColor('co2', plot_type='bar') #plot the merit order
             #run the dispatch object - use the nerc region's merit order (bs), a demand timeseries (gd.demand_data), and a time array (default is array([ 1,  2, ... , 51, 52]) for 52 weeks to run a whole year)
             #if you've already run and saved the dispatch, skip this step
             if not os.path.exists('simple_dispatch_%s_%s_%sco2price.csv'%(nerc_region, str(run_year), str(co2_dol_per_ton))):
@@ -118,9 +118,9 @@ if __name__ == '__main__':
             mefs_cedm_nox = list(cedm_mefs_df[(cedm_mefs_df.region==nerc_region) & (cedm_mefs_df.year==run_year) & (cedm_mefs_df.pollutant=='nox')].factor.values)
 
             #create the plotDispatch object
-            #pd = plotDispatch(nerc_region, dispatch_solution, dispatch_CEMS_gm, deciles, mefs_cedm_co2, mefs_cedm_so2, mefs_cedm_nox)
+            pd = plotDispatch(nerc_region, dispatch_solution, dispatch_CEMS_gm, deciles, mefs_cedm_co2, mefs_cedm_so2, mefs_cedm_nox)
             #added error calculations to the error dataframe
-            #error_main_df = pandas.concat([error_main_df, pd.calcError(run_year)], axis=0)
+            error_main_df = pandas.concat([error_main_df, pd.calcError(run_year)], axis=0)
             #create some figures
             #fDemandEmissionsTotal = pd.plotDemandEmissions('total', figure_dimensions=(5,5))
             #fDemandEmissionsTotal.savefig('fDemandEmissionsTotal' + fig_suffix, dpi=500, bbox_inches='tight')
