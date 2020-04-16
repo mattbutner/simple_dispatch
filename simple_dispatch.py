@@ -50,7 +50,7 @@
 #   'ng' fuel missing price data is populated according to purchase type (contract, spot, or tolling) where tolling prices (which EIA923 has no information on) are calculated as contract prices. Any nan prices (plants in CEMS that aren't in EIA923) are populated with spot, contract, and tolling prices
 #   cleanGeneratorData now derates CHP plants according to their electricity : gross ratio
 
-
+import os
 import numpy
 import pandas
 import matplotlib.pylab
@@ -1630,19 +1630,23 @@ if __name__ == '__main__':
     #for nreg in ['TRE', 'MRO', 'WECC', 'SPP']:
     #for nreg in ['TRE', 'MRO', 'WECC', 'SPP', 'SERC', 'RFC', 'FRCC', 'NPCC']:
         nerc_region = nreg
+        # setting the PATH  - kerwin change this for you
+        folder_path ='C:\\Users\\mattb\\Documents\\GitHub\\simple_dispatch'
+        os.chdir(folder_path)
+
         #input variables. Right now the github only has 2017 data on it.
-        historical_dispatch_save_folder = 'C:\\Users\\tdeet\\Documents\\data\\processed\\epa\\CEMS' #where to save the historical dispatch results
+        historical_dispatch_save_folder = folder_path #where to save the historical dispatch results
         #simulated_dispatch_save_folder = 'C:\\Users\\tdeet\\Documents\\analysis\\modules\\python\\simple_dispatch\\co2_scale\\%s'%(str(run_year)) #where to save the simulated dispatch results
-        simulated_dispatch_save_folder = 'C:\\Users\\tdeet\\Documents\\analysis\\modules\\python\\simple_dispatch' #where to save the simulated dispatch results
+        simulated_dispatch_save_folder = folder_path #where to save the simulated dispatch results
         #specific the location of the data directories
-        ferc714_part2_schedule6_csv = 'C:\\Users\\tdeet\\Documents\\data\\raw\\ferc\\ferc_714\\Part 2 Schedule 6 - Balancing Authority Hourly System Lambda.csv'
-        ferc714IDs_csv='C:\\Users\\tdeet\\Documents\\data\\raw\\ferc\\ferc_714\\Respondent IDs.csv'
-        cems_folder_path ='C:\\Users\\tdeet\\Documents\\data\\raw\\epa\\CEMS'
-        easiur_csv_path ='C:\\Users\\tdeet\\Documents\\data\\raw\\easiur\\egrid_2016_plant_easiur.csv'
-        fuel_commodity_prices_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\processed\\eiaFuelPrices\\fuel_default_prices.xlsx'
+        ferc714_part2_schedule6_csv = 'Part 2 Schedule 6 - Balancing Authority Hourly System Lambda.csv'
+        ferc714IDs_csv='Respondent IDs.csv'
+        cems_folder_path =folder_path+'\\2017'
+        easiur_csv_path ='egrid_2016_plant_easiur.csv'
+        fuel_commodity_prices_xlsx = 'fuel_default_prices.xlsx'
         if run_year == 2017:
-            egrid_data_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eGRID\\egrid2016_data.xlsx'
-            eia923_schedule5_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eia\\eia9232017\\EIA923_Schedules_2_3_4_5_M_12_2017_Final_Revision.xlsx'
+            egrid_data_xlsx = 'egrid2016_data.xlsx'
+            eia923_schedule5_xlsx = 'EIA923_Schedules_2_3_4_5_M_12_2017_Final_Revision.xlsx'
         if run_year == 2016:
             egrid_data_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eGRID\\egrid2016_data.xlsx'
             eia923_schedule5_xlsx = 'C:\\Users\\tdeet\\Documents\\data\\raw\\eia\\eia9232016\\EIA923_Schedules_2_3_4_5_M_12_2016_Final_Revision.xlsx'

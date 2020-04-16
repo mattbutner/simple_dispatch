@@ -7,8 +7,7 @@ Deetjen, Thomas A.,  Azevedo, Ines L. (2019), A reduced-order dispatch model for
 Requires custom modules "simple_dispatch" and "mefs_from_simple_dispatch", available at https://github.com/tdeetjen/simple_dispatch
 
 """
-
-
+import os
 import pickle
 import numpy
 import scipy
@@ -23,6 +22,7 @@ from  mefs_from_simple_dispatch import plotDispatch
 
 if __name__ == '__main__':
     run_year = 2017
+
     #input variables. Right now the github only has 2017 data on it.
     #specific the location of the data directories
     # ferc 714 data from here: https://www.ferc.gov/docs-filing/forms/form-714/data.asp
@@ -34,7 +34,12 @@ if __name__ == '__main__':
     # fuel_default_prices.xlsx compiled from data from https://www.eia.gov/
     ferc714_part2_schedule6_csv = 'Part 2 Schedule 6 - Balancing Authority Hourly System Lambda.csv'
     ferc714IDs_csv='Respondent IDs.csv'
-    cems_folder_path ='C:\\Users\\mattb\\Documents\\GitHub\\simple_dispatch'
+    # here is the path !  - Kerwin Change here`
+    folder_path ='C:\\Users\\mattb\\Documents\\GitHub\\simple_dispatch'
+    os.chdir(folder_path)
+    #
+    cems_folder_path =folder_path+'\\2017'
+
     easiur_csv_path ='egrid_2016_plant_easiur.csv'
     fuel_commodity_prices_xlsx = 'fuel_default_prices.xlsx'
     if run_year == 2017:
@@ -58,7 +63,7 @@ if __name__ == '__main__':
                 gd_short = pickle.load(file)
         except:
             #run the generator data object
-            gd = generatorData(nerc_region, egrid_fname=egrid_data_xlsx, eia923_fname=eia923_schedule5_xlsx, ferc714IDs_fname=ferc714IDs_csv, ferc714_fname=ferc714_part2_schedule6_csv, cems_folder=cems_folder_path, easiur_fname=easiur_csv_path, include_easiur_damages=True, year=run_year, fuel_commodity_prices_excel_dir=fuel_commodity_prices_xlsx, hist_downtime=False, coal_min_downtime = 12, cems_validation_run=False)
+            gd = generatorData(nerc_region, egrid_fname=egrid_data_xlsx, eia923_fname=eia923_schedule5_xlsx, ferc714IDs_fname=ferc714IDs_csv, ferc714_fname=ferc714_part2_schedule6_csv, cems_folder=folder_path, easiur_fname=easiur_csv_path, include_easiur_damages=True, year=run_year, fuel_commodity_prices_excel_dir=fuel_commodity_prices_xlsx, hist_downtime=False, coal_min_downtime = 12, cems_validation_run=False)
             #pickle the trimmed version of the generator data object
             gd_short = {'year': gd.year, 'nerc': gd.nerc, 'hist_dispatch': gd.hist_dispatch, 'demand_data': gd.demand_data, 'mdt_coal_events': gd.mdt_coal_events, 'df': gd.df}
             pickle.dump(gd_short, open('generator_data_short_%s_%s.obj'%(nerc_region, str(run_year)), 'wb'))
@@ -70,8 +75,8 @@ if __name__ == '__main__':
             bs = bidStack(gd_short, co2_dol_per_kg=(co2_dol_per_ton / 907.185), time=30, dropNucHydroGeo=True, include_min_output=False, mdt_weight=0.5) #NOTE: set dropNucHydroGeo to True if working with data that only looks at fossil fuels (e.g. CEMS)
             #produce bid stack plots
             #bid_stack_cost = bs.plotBidStackMultiColor('gen_cost', plot_type='bar', fig_dim = (4,4), production_cost_only=True) #plot the merit order
-            bid_stack_cost = bs.plotBidStackMultiColor('gen_cost', plot_type='bar', fig_dim = (4,4), production_cost_only=False) #plot the merit order
-            bid_stack_co2 = bs.plotBidStackMultiColor('co2', plot_type='bar') #plot the merit order
+            #bid_stack_cost = bs.plotBidStackMultiColor('gen_cost', plot_type='bar', fig_dim = (4,4), production_cost_only=False) #plot the merit order
+            #bid_stack_co2 = bs.plotBidStackMultiColor('co2', plot_type='bar') #plot the merit order
             #run the dispatch object - use the nerc region's merit order (bs), a demand timeseries (gd.demand_data), and a time array (default is array([ 1,  2, ... , 51, 52]) for 52 weeks to run a whole year)
             #if you've already run and saved the dispatch, skip this step
             if not os.path.exists('simple_dispatch_%s_%s_%sco2price.csv'%(nerc_region, str(run_year), str(co2_dol_per_ton))):
@@ -95,7 +100,7 @@ if __name__ == '__main__':
             #historical CEMS dispatch data
             dispatch_CEMS = gd_short['hist_dispatch']
             dispatch_CEMS.datetime = pandas.to_datetime(dispatch_CEMS.datetime) #put the datetime column into the correct type
-            dispatch_CEMS.gen_cost_marg = scipy.minimum(150, dispatch_CEMS.gen_cost_marg) #remove prices larger than 150 $/MWh. Consider these outliers. For example, with 2014 TRE, R-squared between the actual data and simulated data is 0.16 while R-squared after capping the historical data at 150 $/MWh is 0.53. 150 $/MWh is something above the 99th percentile in most cases, so we are now saying that the simulation has a fit of 0.53 for 99+% of the historical data.
+            dispatch_CEMS.gen_cost_marg = numpy.minimum(150, dispatch_CEMS.gen_cost_marg) #remove prices larger than 150 $/MWh. Consider these outliers. For example, with 2014 TRE, R-squared between the actual data and simulated data is 0.16 while R-squared after capping the historical data at 150 $/MWh is 0.53. 150 $/MWh is something above the 99th percentile in most cases, so we are now saying that the simulation has a fit of 0.53 for 99+% of the historical data.
             gm_cems = generateMefs(dispatch_CEMS)
             dispatch_CEMS_gm = gm_cems.df.copy(deep=True) #the script now calcultes hourly MEFs, which we want for some plotting below
 
@@ -113,15 +118,15 @@ if __name__ == '__main__':
             mefs_cedm_nox = list(cedm_mefs_df[(cedm_mefs_df.region==nerc_region) & (cedm_mefs_df.year==run_year) & (cedm_mefs_df.pollutant=='nox')].factor.values)
 
             #create the plotDispatch object
-            pd = plotDispatch(nerc_region, dispatch_solution, dispatch_CEMS_gm, deciles, mefs_cedm_co2, mefs_cedm_so2, mefs_cedm_nox)
+            #pd = plotDispatch(nerc_region, dispatch_solution, dispatch_CEMS_gm, deciles, mefs_cedm_co2, mefs_cedm_so2, mefs_cedm_nox)
             #added error calculations to the error dataframe
-            error_main_df = pandas.concat([error_main_df, pd.calcError(run_year)], axis=0)
+            #error_main_df = pandas.concat([error_main_df, pd.calcError(run_year)], axis=0)
             #create some figures
-            fDemandEmissionsTotal = pd.plotDemandEmissions('total', figure_dimensions=(5,5))
-            fDemandEmissionsTotal.savefig('fDemandEmissionsTotal' + fig_suffix, dpi=500, bbox_inches='tight')
-            fDemandEmissionsMarginal = pd.plotDemandEmissions('marginal', figure_dimensions=(5,5))
-            fDemandEmissionsMarginal.savefig('fDemandEmissionsMarginal' + fig_suffix, dpi=500, bbox_inches='tight')
-            fDemandPrice = pd.plotDemandPrices(figure_dimensions=(5,5))
+            #fDemandEmissionsTotal = pd.plotDemandEmissions('total', figure_dimensions=(5,5))
+            #fDemandEmissionsTotal.savefig('fDemandEmissionsTotal' + fig_suffix, dpi=500, bbox_inches='tight')
+            #fDemandEmissionsMarginal = pd.plotDemandEmissions('marginal', figure_dimensions=(5,5))
+            #fDemandEmissionsMarginal.savefig('fDemandEmissionsMarginal' + fig_suffix, dpi=500, bbox_inches='tight')
+            #fDemandPrice = pd.plotDemandPrices(figure_dimensions=(5,5))
 
             #density function plots
             #price and emissions
@@ -137,18 +142,18 @@ if __name__ == '__main__':
                     df_start = '2014-06-01 00:00:00'
                     df_end = '2014-09-01 00:00:00'
                 #run plot and save scripts
-                price_df = pd.plot_density_function('cumulative', 'data', 'gen_cost_marg', start_date=df_start, end_date=df_end, x_range=[0,100])
-                price_df_err = pd.plot_density_function('probability', 'error', 'gen_cost_marg', start_date=df_start, end_date=df_end, bin_no=50, error_range=[-1,1])
-                co2_df = pd.plot_density_function('cumulative', 'data', 'co2_tot', start_date=df_start, end_date=df_end)
-                co2_df_err = pd.plot_density_function('probability', 'error', 'co2_tot', start_date=df_start, end_date=df_end, bin_no=50, error_range=[-1,1])
-                so2_df = pd.plot_density_function('cumulative', 'data', 'so2_tot', start_date=df_start, end_date=df_end, bin_no=50, x_range=[-scipy.inf, scipy.inf])
-                so2_df_err = pd.plot_density_function('probability', 'error', 'so2_tot', start_date=df_start, end_date=df_end, bin_no=50, error_range=[-1,1])
-                nox_df = pd.plot_density_function('cumulative', 'data', 'nox_tot', start_date=df_start, end_date=df_end)
-                nox_df_err = pd.plot_density_function('probability', 'error', 'nox_tot', start_date=df_start, end_date=df_end, bin_no=50, error_range=[-1,1])
+                #price_df = pd.plot_density_function('cumulative', 'data', 'gen_cost_marg', start_date=df_start, end_date=df_end, x_range=[0,100])
+                #price_df_err = pd.plot_density_function('probability', 'error', 'gen_cost_marg', start_date=df_start, end_date=df_end, bin_no=50, error_range=[-1,1])
+                #co2_df = pd.plot_density_function('cumulative', 'data', 'co2_tot', start_date=df_start, end_date=df_end)
+                #co2_df_err = pd.plot_density_function('probability', 'error', 'co2_tot', start_date=df_start, end_date=df_end, bin_no=50, error_range=[-1,1])
+                #so2_df = pd.plot_density_function('cumulative', 'data', 'so2_tot', start_date=df_start, end_date=df_end, bin_no=50, x_range=[-scipy.inf, scipy.inf])
+                #so2_df_err = pd.plot_density_function('probability', 'error', 'so2_tot', start_date=df_start, end_date=df_end, bin_no=50, error_range=[-1,1])
+                #nox_df = pd.plot_density_function('cumulative', 'data', 'nox_tot', start_date=df_start, end_date=df_end)
+                #nox_df_err = pd.plot_density_function('probability', 'error', 'nox_tot', start_date=df_start, end_date=df_end, bin_no=50, error_range=[-1,1])
                 #mefs
-                co2_mefs_df = pd.plot_density_function('cumulative', 'data', 'co2_marg', start_date=df_start, end_date=df_end, x_range=[0,1500])
-                co2_mefs_df_err = pd.plot_density_function('probability', 'error', 'co2_marg', start_date=df_start, end_date=df_end, bin_no=50, x_range=[0,1500/0.454], error_range=[-1000,1000])
-                so2_mefs_df = pd.plot_density_function('cumulative', 'data', 'so2_marg', start_date=df_start, end_date=df_end, x_range=[0,3/0.454])
-                so2_mefs_df_err = pd.plot_density_function('probability', 'error', 'so2_marg', start_date=df_start, end_date=df_end, bin_no=50, x_range=[0,3/0.454], error_range=[-4,4])
-                nox_mefs_df = pd.plot_density_function('cumulative', 'data', 'nox_marg', start_date=df_start, end_date=df_end, x_range=[0,2/0.454])
-                nox_mefs_df_err = pd.plot_density_function('probability', 'error', 'nox_marg', start_date=df_start, end_date=df_end, bin_no=50, x_range=[0,2/0.454], error_range=[-3,3])
+                #co2_mefs_df = pd.plot_density_function('cumulative', 'data', 'co2_marg', start_date=df_start, end_date=df_end, x_range=[0,1500])
+                #co2_mefs_df_err = pd.plot_density_function('probability', 'error', 'co2_marg', start_date=df_start, end_date=df_end, bin_no=50, x_range=[0,1500/0.454], error_range=[-1000,1000])
+                #so2_mefs_df = pd.plot_density_function('cumulative', 'data', 'so2_marg', start_date=df_start, end_date=df_end, x_range=[0,3/0.454])
+                #so2_mefs_df_err = pd.plot_density_function('probability', 'error', 'so2_marg', start_date=df_start, end_date=df_end, bin_no=50, x_range=[0,3/0.454], error_range=[-4,4])
+                #nox_mefs_df = pd.plot_density_function('cumulative', 'data', 'nox_marg', start_date=df_start, end_date=df_end, x_range=[0,2/0.454])
+                #nox_mefs_df_err = pd.plot_density_function('probability', 'error', 'nox_marg', start_date=df_start, end_date=df_end, bin_no=50, x_range=[0,2/0.454], error_range=[-3,3])
